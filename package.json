@@ -1,0 +1,22 @@
+{
+  "name": "codex-window",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A small standalone Codex usage-window scheduler and TUI",
+  "type": "module",
+  "license": "MIT",
+  "repository": "https://github.com/HoloNova/codex-window",
+  "bin": { "codex-window": "dist/cli.js" },
+  "engines": { "node": ">=24.0.0" },
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "start": "node dist/cli.js",
+    "dev": "npm run build && npm start",
+    "test": "npm run build && node --test --test-concurrency=1 test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "5.9.3"
+  }
+}

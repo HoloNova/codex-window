@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.env.*
+.codex-window-node/
+auth.json
+state.json
+*.lock.tmp
