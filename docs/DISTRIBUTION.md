@@ -12,10 +12,10 @@
 
 `native/tray.c` compiles with the Windows SDK and Visual Studio C compiler, UTF-8 source and static CRT, as `CodexWindow.exe` (GUI subsystem). It uses Win32/Shell APIs only. The bundled Node SEA is `codex-window-core.exe` (console subsystem), next to it.
 
-1. Double-click the launcher: one per-data-home tray instance starts the backend hidden.
-2. Open TUI: create one console child; keep its process handle to avoid opening a second panel from that tray. Restoring/focusing an existing console is best-effort and depends on the configured terminal host.
+1. Double-click the launcher: one per-data-home tray instance immediately opens the TUI. The panel's existing startup path ensures the backend is running.
+2. Double-click the launcher again or use Open TUI: reopen a closed panel or request restoring the existing console, not another tray/panel instance. Restoring/focusing is best-effort and depends on the configured terminal host.
 3. Close the TUI with its normal controls: leave tray and backend running.
-4. Exit application: run the core's headless `quit`, wait asynchronously, and remove the icon only after cooperative shutdown. The menu is disabled while startup/exit is pending. The icon tooltip indicates exit in progress.
+4. Exit application: run the core's headless `quit`, wait asynchronously, and remove the icon only after cooperative shutdown. The menu and repeated-open requests are disabled while exit is pending. The icon tooltip indicates exit in progress.
 
 No `cmd.exe`/PowerShell is used by the launcher at runtime: `CreateProcessW` receives an absolute executable path and CRT-quoted arguments. Unicode paths and custom `--home`/`CODEX_WINDOW_HOME` are passed explicitly. Windows Explorer restart restores the icon. There is no notification integration or Electron runtime.
 
@@ -72,13 +72,13 @@ Generated files live under ignored `.artifacts/`:
 
 Archive inputs are an explicit asset allowlist, never a project/home-directory glob. The isolated headless smoke check copies **only the executable** to a temporary path, uses a temporary Unicode/space-containing home, verifies startup/status/language/quit, and installs no credential—even synthetic—so it cannot contact real token or usage endpoints. The Windows tray binary is checked for successful compilation only, never started by automated verification.
 
-Workflow artifacts expire after 14 days. The workflow does **not** create a release, sign binaries, push commits, install anything globally or deploy/stop a service. A real release/push remains separately authorized work.
+Workflow artifacts expire after 14 days. Authorized preview releases attach the verified archives and checksum sidecars to [GitHub Releases](https://github.com/HoloNova/codex-window/releases), where they have no Actions retention expiry. Publication uses the exact successful CI commit and a preview tag; Windows GUI acceptance remains explicitly pending. The workflow itself does **not** create a release, sign binaries, push commits, install anything globally or deploy/stop a service. Future releases/pushes still require authorization.
 
 ## Manual acceptance (no UI automation)
 
 - English first launch, S language selection, instant switch to Chinese/back, unchanged account configuration/enable flags. Opening S read-only; changing business settings still pauses affected profiles.
 - Both languages in wide/narrow/short terminals: alignment, wrapped text, dialogs, three-row preview, D log scrolling, unframed toast/exit confirmation, Esc and double Ctrl+C. Existing Chinese history remains unchanged; model IDs/search input are never translated.
-- Windows: extract a complete archive; tray remains without a console; open/close/reopen panel; repeated Open does not duplicate the panel; taskbar restart restores the icon; custom Unicode/space path works.
+- Windows: extract a complete archive; double-click opens the panel and creates a tray icon; close/reopen via the launcher or tray; repeated Open does not duplicate the panel; taskbar restart restores the icon; custom Unicode/space path works.
 - Windows Exit application closes panel/backend/tray without altering enabled flags; next launch restores behavior after a fresh usage check. Test a pending read/rotation only with appropriate explicit authorization; never force production token-rotation experiments.
 - Linux executable opens the same TUI without Node/npm. `quit` preserves account flags; `stop` pauses. No duplicate same-account schedulers.
-- Before publishing: run real cross-platform CI, inspect artifact content/checksums, accept the Windows native behavior and choose a release channel. Local Linux success is not Windows acceptance or long-term stability proof.
+- Before publishing a preview: run real cross-platform CI, inspect artifact content/checksums and disclose pending manual acceptance in release notes. Windows native behavior must be accepted before claiming stable Windows support. Local Linux success is not Windows acceptance or long-term stability proof.

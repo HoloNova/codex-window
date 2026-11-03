@@ -9,6 +9,7 @@
 #define WM_TRAY (WM_APP + 1)
 #define WM_JOB_DONE (WM_APP + 2)
 #define WM_CLOSE_ICON (WM_APP + 3)
+#define WM_OPEN_PANEL (WM_APP + 4)
 #define MENU_OPEN 100
 #define MENU_EXIT 101
 #define PATH_CAP 4096
@@ -151,6 +152,9 @@ static LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wparam, LPARAM
             }
             return 0;
         }
+        case WM_OPEN_PANEL:
+            if (!job_process) open_panel();
+            return 0;
         case WM_CLOSE_ICON: DestroyWindow(hwnd); return 0;
         case WM_CLOSE: start_job(MENU_EXIT); return 0;
         case WM_DESTROY:
@@ -203,7 +207,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     }
     WCHAR mutex_name[128]; _snwprintf_s(mutex_name, ARRAYSIZE(mutex_name), _TRUNCATE, L"Local\\%s", class_name);
     singleton = CreateMutexW(NULL, TRUE, mutex_name);
-    if (!singleton || GetLastError() == ERROR_ALREADY_EXISTS) { if (singleton) CloseHandle(singleton); return 0; }
+    if (!singleton) return 1;
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        HWND existing = FindWindowW(class_name, NULL);
+        if (existing) {
+            DWORD pid = 0; GetWindowThreadProcessId(existing, &pid);
+            if (pid) AllowSetForegroundWindow(pid);
+            PostMessageW(existing, WM_OPEN_PANEL, 0, 0);
+        }
+        CloseHandle(singleton); return 0;
+    }
     DWORD path_size = GetModuleFileNameW(NULL, core, PATH_CAP);
     if (!path_size || path_size >= PATH_CAP) { CloseHandle(singleton); return 1; }
     WCHAR *slash = wcsrchr(core, L'\\');
@@ -221,7 +234,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     icon_data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP; icon_data.uCallbackMessage = WM_TRAY;
     icon_data.hIcon = LoadIconW(NULL, IDI_APPLICATION); wcscpy_s(icon_data.szTip, ARRAYSIZE(icon_data.szTip), L"Codex Window Autorefresh");
     if (!Shell_NotifyIconW(NIM_ADD, &icon_data)) { DestroyWindow(window_handle); CloseHandle(singleton); return 1; }
-    start_job(0);
+    /* TUI startup already ensures the backend; show it rather than starting hidden. */
+    open_panel();
     MSG message; int result;
     while ((result = (int)GetMessageW(&message, NULL, 0, 0)) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
     CloseHandle(singleton); return result < 0 ? 1 : 0;

@@ -6,9 +6,10 @@ increase your allowance. A hello request can consume a small amount of quota.
 
 Windows x64 (desktop Windows 10/11)
 -----------------------------------
-Extract ALL files together, then run CodexWindow.exe. It starts the backend and
-shows a native tray icon. Double-click the icon or choose Open TUI to open the
-terminal panel. Closing the panel leaves the backend running.
+Extract ALL files together, then double-click CodexWindow.exe. It opens the TUI
+and keeps a tray icon. Double-click the launcher again, double-click the icon or
+choose Open TUI to reopen the panel. Closing the panel leaves the backend running.
+Keep codex-window-core.exe beside the launcher; do not start it separately.
 Exit application drains this application's requests/credential saves and exits
 its panels/backend/tray, preserving account enabled flags and pending outcomes.
 The next launch resumes previously enabled accounts after querying fresh usage.
@@ -52,6 +53,7 @@ The application will not silently replace an incompatible running backend.
 Help: ./codex-window --help (Linux)
       .\codex-window-core.exe --help (Windows terminal)
 
+Downloads: https://github.com/HoloNova/codex-window/releases
 Source: https://github.com/HoloNova/codex-window
 Application license/source attribution: LICENSE and NOTICE.md
 Bundled Node runtime and third-party notices: LICENSE_NODE.txt
