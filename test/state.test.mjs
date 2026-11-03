@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, statSync, existsSync, chmodSync } from 'node:fs';
+import fs, { mkdtempSync, rmSync, readFileSync, writeFileSync, statSync, existsSync, chmodSync, readdirSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn, execFile } from 'node:child_process';
@@ -8,7 +9,7 @@ import { promisify } from 'node:util';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { Store, tryLock, isAlive } from '../dist/state.js';
+import { Store, atomicJson, tryLock, isAlive } from '../dist/state.js';
 import { configure } from '../dist/actions.js';
 import { ensureWorker } from '../dist/worker.js';
 import { fixture, wireUsage, json } from './helpers.mjs';
@@ -90,6 +91,53 @@ test('locks exclude live owners and safely recover a dead owner', async t => {
   writeFileSync(path, JSON.stringify({ pid: child.pid, token: 'dead-owner' }));
   const recovered = tryLock(path); assert(recovered); recovered();
   assert.equal(existsSync(path), false);
+});
+function windowsReplacementFault(t, replace, check) {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  const rename = t.mock.method(fs, 'renameSync', replace);
+  const sleep = t.mock.method(Atomics, 'wait', () => 'timed-out');
+  Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
+  syncBuiltinESMExports();
+  try { check(rename, sleep); }
+  finally { Object.defineProperty(process, 'platform', platform); t.mock.restoreAll(); syncBuiltinESMExports(); }
+}
+test('temporary Windows replacement refusals retain the old file until a complete new file commits', async t => {
+  const store = await temporary(t), path = join(store.home, 'atomic.json'), realRename = fs.renameSync;
+  atomicJson(path, { value: 'old' }); let attempts = 0;
+  windowsReplacementFault(t, (from, to) => {
+    assert.equal(to, path);
+    assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), { value: 'old' });
+    assert.deepEqual(JSON.parse(readFileSync(from, 'utf8')), { value: 'new' });
+    if (attempts++ < 3) throw Object.assign(new Error('synthetic Windows replacement refusal'), { code: ['EPERM', 'EACCES', 'EBUSY'][attempts - 1] });
+    realRename(from, to);
+  }, (_rename, sleep) => {
+    atomicJson(path, { value: 'new' });
+    assert.equal(attempts, 4);
+    assert(sleep.mock.calls.length > 0);
+    assert(sleep.mock.calls.reduce((sum, call) => sum + call.arguments[3], 0) <= 250);
+  });
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), { value: 'new' });
+  assert(!readdirSync(store.home).some(name => name.endsWith('.tmp')));
+});
+test('persistent Windows replacement denial is bounded, preserves old data and cleans the temporary file', async t => {
+  const store = await temporary(t), path = join(store.home, 'atomic.json');
+  atomicJson(path, { value: 'old' }); const denial = Object.assign(new Error('synthetic persistent denial'), { code: 'EPERM' });
+  windowsReplacementFault(t, () => { throw denial; }, (rename, sleep) => {
+    assert.throws(() => atomicJson(path, { value: 'new' }), error => error === denial);
+    assert(rename.mock.callCount() > 1 && rename.mock.callCount() <= 6);
+    assert(sleep.mock.calls.reduce((sum, call) => sum + call.arguments[3], 0) <= 250);
+  });
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), { value: 'old' });
+  assert(!readdirSync(store.home).some(name => name.endsWith('.tmp')));
+});
+test('non-sharing Windows replacement errors fail immediately without deleting the destination', async t => {
+  const store = await temporary(t), path = join(store.home, 'atomic.json');
+  atomicJson(path, { value: 'old' }); const failure = Object.assign(new Error('synthetic read-only filesystem'), { code: 'EROFS' });
+  windowsReplacementFault(t, () => { throw failure; }, (rename, sleep) => {
+    assert.throws(() => atomicJson(path, { value: 'new' }), error => error === failure);
+    assert.equal(rename.mock.callCount(), 1); assert.equal(sleep.mock.callCount(), 0);
+  });
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), { value: 'old' });
 });
 test('cross-process state updates do not overwrite one another', async t => {
   const store = await temporary(t);

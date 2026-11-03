@@ -139,7 +139,18 @@ export function atomicJson(path: string, value: unknown): void {
     const fd = openSync(temporary, 'wx', 0o600);
     try { writeFileSync(fd, JSON.stringify(value, null, 2) + '\n'); fsyncSync(fd); }
     finally { closeSync(fd); }
-    renameSync(temporary, path);
+    // A Windows reader/scanner can briefly deny replacement even while this
+    // writer owns state.lock. Retry the same durable file; never unlink the old
+    // destination. Keep the synchronous credential-save contract and fail after
+    // at most 250ms rather than hiding a persistent permission failure.
+    for (let attempt = 0; ; attempt++) {
+      try { renameSync(temporary, path); break; }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (process.platform !== 'win32' || !['EPERM', 'EACCES', 'EBUSY'].includes(code ?? '') || attempt >= 5) throw error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(10 * 2 ** attempt, 100));
+      }
+    }
     if (process.platform !== 'win32') {
       const directory = openSync(dirname(path), 'r');
       try { fsyncSync(directory); } finally { closeSync(directory); }
