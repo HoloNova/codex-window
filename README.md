@@ -34,6 +34,8 @@ Press **A** to add or switch accounts. Accounts run independently; new accounts 
 
 **Settings sync is on by default**, sharing the model, time zone, operating hours and check interval, but not enable/pause state. Turn it off in S to configure accounts separately. Saving pauses accounts whose configuration actually changes; enable them again when ready.
 
+In settings, ↑↓ wraps between the first and last items; Home/End jumps to either end. The subscription card shows the next locally scheduled action; opening a window still depends on current usage and settings when it runs.
+
 ## Shortcuts
 
 | Key | Action |
@@ -53,6 +55,7 @@ To exit the application, use **Exit application** in the Windows tray or `./code
 ## Notes
 
 - Unofficial tool. It cannot reset an active window or increase quota; requests consume a small amount of quota.
+- New sign-ins request reduced OAuth scopes; provider compatibility still needs verification. Existing credentials and grants are unchanged.
 - Run only one scheduler per account, including other tools. Uncertain sends are not retried automatically.
 - Data is stored in `~/.codex-window-node`, including plaintext credentials. Do not upload or share this directory.
 - Before upgrading an older version, close its panel and run its `stop` command. Wait for the backend to exit, then upgrade and re-enable accounts as needed.

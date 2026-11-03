@@ -34,7 +34,15 @@ try {
   await assert.rejects(call('stop', '--account', 'default'), /不接受 --account/);
   assert.equal(readFileSync(path, 'utf8'), before);
   for (const asset of ['LICENSE', 'NOTICE.md', 'LICENSE_NODE.txt', 'BUILDINFO.json', 'SHA256SUMS']) assert(existsSync(join(stage, asset)), asset);
-  if (process.platform === 'win32') assert(existsSync(join(stage, 'CodexWindow.exe')), 'Native launcher must have compiled');
+  if (process.platform === 'win32') {
+    const launcher = readFileSync(join(stage, 'CodexWindow.exe')), icon = readFileSync(join(root, 'assets/icon.ico'));
+    assert.equal(icon.readUInt16LE(2), 1);
+    for (let i = 0; i < icon.readUInt16LE(4); i++) {
+      const entry = 6 + i * 16, length = icon.readUInt32LE(entry + 8), offset = icon.readUInt32LE(entry + 12);
+      assert(length > 0 && offset + length <= icon.length);
+      assert(launcher.includes(icon.subarray(offset, offset + length)), 'Launcher must embed each branded icon resolution');
+    }
+  }
   console.log('Headless packaged executable checks passed; no UI or real credentials used.');
 } finally {
   if (started) await call('quit');

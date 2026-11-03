@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include "resource.h"
 
 #define WM_TRAY (WM_APP + 1)
 #define WM_JOB_DONE (WM_APP + 2)
@@ -227,12 +228,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     }
     app_instance = instance;
     WNDCLASSW klass; ZeroMemory(&klass, sizeof(klass)); klass.lpfnWndProc = procedure; klass.hInstance = app_instance; klass.lpszClassName = class_name;
+    klass.hIcon = LoadIconW(app_instance, MAKEINTRESOURCEW(IDI_CODEX_WINDOW));
     if (!RegisterClassW(&klass)) { CloseHandle(singleton); return 1; }
     window_handle = CreateWindowExW(0, class_name, L"Codex Window", WS_OVERLAPPED, 0, 0, 0, 0, NULL, NULL, instance, NULL);
     if (!window_handle) { CloseHandle(singleton); return 1; }
     ZeroMemory(&icon_data, sizeof(icon_data)); icon_data.cbSize = (DWORD)sizeof(icon_data); icon_data.hWnd = window_handle; icon_data.uID = 1;
     icon_data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP; icon_data.uCallbackMessage = WM_TRAY;
-    icon_data.hIcon = LoadIconW(NULL, IDI_APPLICATION); wcscpy_s(icon_data.szTip, ARRAYSIZE(icon_data.szTip), L"Codex Window Autorefresh");
+    icon_data.hIcon = (HICON)LoadImageW(app_instance, MAKEINTRESOURCEW(IDI_CODEX_WINDOW), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED);
+    if (!icon_data.hIcon) icon_data.hIcon = klass.hIcon;
+    wcscpy_s(icon_data.szTip, ARRAYSIZE(icon_data.szTip), L"Codex Window Autorefresh");
     if (!Shell_NotifyIconW(NIM_ADD, &icon_data)) { DestroyWindow(window_handle); CloseHandle(singleton); return 1; }
     /* TUI startup already ensures the backend; show it rather than starting hidden. */
     open_panel();

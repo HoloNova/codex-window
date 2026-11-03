@@ -1,0 +1,6 @@
+#ifndef CODEX_WINDOW_RESOURCE_H
+#define CODEX_WINDOW_RESOURCE_H
+
+#define IDI_CODEX_WINDOW 101
+
+#endif

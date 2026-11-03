@@ -12,6 +12,8 @@
 
 `native/tray.c` compiles with the Windows SDK and Visual Studio C compiler, UTF-8 source and static CRT, as `CodexWindow.exe` (GUI subsystem). It uses Win32/Shell APIs only. The bundled Node SEA is `codex-window-core.exe` (console subsystem), next to it.
 
+`assets/icon.svg` is the shared artwork: the refresh arrow is centered on the entire icon, in front of the window. The checked-in PNG and eight-size ICO are rendered assets. SDK `rc.exe` compiles `native/tray.rc`; the linked resource supplies both the launcher's Explorer/class icon and the tray's system-small icon. No loose icon is required in the release. Static asset tests validate ICO frames, and Windows package checks confirm every frame is embedded without starting a GUI.
+
 1. Double-click the launcher: one per-data-home tray instance immediately opens the TUI. The panel's existing startup path ensures the backend is running.
 2. Double-click the launcher again or use Open TUI: reopen a closed panel or request restoring the existing console, not another tray/panel instance. Restoring/focusing is best-effort and depends on the configured terminal host.
 3. Close the TUI with its normal controls: leave tray and backend running.

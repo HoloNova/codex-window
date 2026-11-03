@@ -32,6 +32,8 @@ First use
 L signs in, M selects a model, R enables the selected account. A switches/adds
 accounts; switching shows local cached data only. New accounts start paused.
 S edits settings and the global interface language (English / Simplified Chinese).
+Settings arrows wrap at either end; Home/End jumps to the first/last item.
+Next action shows a local check plan, not a guaranteed send time.
 Language changes do not pause accounts or synchronize account settings. Business
 setting changes pause affected accounts and need explicit R to enable again.
 Esc returns one step. Ctrl+C twice closes only the panel. D opens session logs.
@@ -42,6 +44,8 @@ Data defaults to ~/.codex-window-node (USERPROFILE on Windows), outside this
 release folder. --home PATH or CODEX_WINDOW_HOME selects another dedicated home.
 Never point it at Pi/Codex/other credential directories. auth.json contains your
 private plaintext credentials; do not share it, commit it or put it in reports.
+New sign-ins request reduced OAuth scopes; provider compatibility still needs
+real-service verification. Existing credentials and grants are unchanged.
 Each account owns its config.json and state.json. preferences.json stores only
 application display language. Do not edit application/session/lock files.
 Settings synchronization defaults to on; manual edits of one config do NOT sync.

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title description">
+  <title id="title">Codex Window</title>
+  <desc id="description">A cyan clockwise arrow centered on the entire icon and layered in front of a window, on a dark rounded square.</desc>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="#101e2b"/>
+  <g fill="none" stroke="#55d6d8" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="44" y="48" width="168" height="160" rx="22"/>
+    <path d="M44 94h168"/>
+  </g>
+  <circle cx="128" cy="128" r="56" fill="#101e2b"/>
+  <g fill="none" stroke="#55d6d8" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M128 168a40 40 0 1 1 40-40v14"/>
+    <path d="m152 126 16 16 16-16"/>
+  </g>
+</svg>

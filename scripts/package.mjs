@@ -29,8 +29,10 @@ copyFileSync(process.execPath, binary); chmodSync(binary, 0o755);
 if (process.platform === 'win32') execFileSync('signtool.exe', ['remove', '/s', binary], { stdio: 'inherit' });
 await postject.inject(binary, 'NODE_SEA_BLOB', readFileSync(blob), { sentinelFuse: 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2' });
 if (process.platform === 'win32') {
-  // Invoked from a Visual Studio developer environment in the Windows CI job.
-  execFileSync('cl.exe', ['/nologo', '/W4', '/WX', '/O2', '/MT', '/utf-8', '/std:c11', '/DUNICODE', '/D_UNICODE', '/D_WIN32_WINNT=0x0A00', join(root, 'native/tray.c'), `/Fe:${join(output, 'CodexWindow.exe')}`, `/Fo:${join(temporary, 'tray.obj')}`, '/link', '/SUBSYSTEM:WINDOWS', 'user32.lib', 'shell32.lib', 'gdi32.lib'], { stdio: 'inherit' });
+  // Embed the same multi-size icon used by Explorer and the native tray.
+  const resource = join(temporary, 'tray.res');
+  execFileSync('rc.exe', ['/nologo', '/I', join(root, 'native'), '/I', join(root, 'assets'), '/fo', resource, join(root, 'native/tray.rc')], { stdio: 'inherit' });
+  execFileSync('cl.exe', ['/nologo', '/W4', '/WX', '/O2', '/MT', '/utf-8', '/std:c11', '/DUNICODE', '/D_UNICODE', '/D_WIN32_WINNT=0x0A00', join(root, 'native/tray.c'), `/Fe:${join(output, 'CodexWindow.exe')}`, `/Fo:${join(temporary, 'tray.obj')}`, '/link', '/SUBSYSTEM:WINDOWS', resource, 'user32.lib', 'shell32.lib', 'gdi32.lib'], { stdio: 'inherit' });
 }
 for (const name of ['LICENSE', 'NOTICE.md']) copyFileSync(join(root, name), join(output, name));
 copyFileSync(join(root, 'docs/PACKAGE_README.md'), join(output, 'README.txt'));

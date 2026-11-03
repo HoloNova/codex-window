@@ -1,6 +1,6 @@
 {
   "name": "codex-window",
-  "version": "0.1.0-preview.1",
+  "version": "0.1.0-preview.2",
   "private": true,
   "description": "A small standalone Codex usage-window scheduler and TUI",
   "type": "module",

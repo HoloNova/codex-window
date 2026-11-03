@@ -184,18 +184,34 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
       lines.push(pad(paint(label, 'muted'), quotaLabelWidth) + bar + value,
         (width >= 32 ? ' '.repeat(quotaLabelWidth) : '') + paint(`${time(window?.resetAt ?? null)} 重置`, 'muted'), '');
     }
+    const stopping = state.stop || accounts.read().stop;
     let statusText = '已暂停 · 仅查询额度', tone: Tone = 'muted';
     if (!identity) { statusText = '待登录'; tone = 'warning'; }
     else if (identity.needsLogin) { statusText = '需要重新登录'; tone = 'warning'; }
     else if (state.hold) { statusText = '发送结果待确认 · 不会自动重发'; tone = 'warning'; }
     else if (!running) statusText = '后台未运行';
-    else if (state.stop || accounts.read().stop) statusText = '整个后台正在停止';
+    else if (stopping) statusText = '整个后台正在停止';
     else if (state.enabled) {
       statusText = status.busy ? '已启用 · 正在处理' : '已启用'; tone = 'good';
       if (usage && (usage.limited || !usage.allowed || usage.weekly.used >= 100)) { statusText = '已启用 · 额度受限'; tone = 'warning'; }
       else if (stale) { statusText = '已启用 · 等待最新额度'; tone = 'wait'; }
     }
+    // Show only the worker's published plan, never infer a guaranteed send from
+    // quota reset times. A paused/pending account still has read-only checks.
+    const readOnly = !state.enabled || !!state.hold || !s.model;
+    const due = Math.min(status.nextPoll ?? Infinity, readOnly ? Infinity : status.nextRefresh ?? Infinity);
+    let nextText: string, nextTone: Tone = 'muted';
+    if (!running) nextText = tr('后台未运行');
+    else if (stopping) nextText = tr('整个后台正在停止');
+    else if (!identity || identity.needsLogin) { nextText = tr(identity ? '需要重新登录' : '待登录'); nextTone = 'warning'; }
+    else if (status.busy) { nextText = tr('处理中，完成后更新计划'); nextTone = 'wait'; }
+    else if (state.check !== state.checked || Number.isFinite(due)) {
+      const when = state.check !== state.checked || due <= now() ? tr('等待执行') : time(due);
+      nextText = `${when} · ${tr(readOnly ? '仅查询额度' : '检查额度，符合条件时开窗')}`;
+      nextTone = readOnly ? 'muted' : 'wait';
+    } else nextText = tr('尚未安排');
     lines.push(paint('状态  ', 'muted') + paint(statusText, tone),
+      paint('下次动作  ', 'muted') + color(nextText, nextTone),
       paint(`时段  ${s.start === s.end ? tr('全天') : `${s.start}–${s.end}`}`, 'muted'),
       paint(`时区  ${s.timezone} · 每 ${s.pollMinutes} 分钟查询`, 'muted'),
       paint('更新  ', 'muted') + paint(`${time(usage?.fetchedAt ?? null)}${stale ? tr(' · 待更新') : ''}`, 'muted'));
@@ -319,7 +335,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
         option(tr(`同步账号设置  ${tr(settings.syncSettings ? '开启' : '关闭')}`), fields.length, settings.selected);
         option(`${tr('界面语言')}  ${getLanguage() === 'en' ? 'English' : '简体中文'}`, fields.length + 1, settings.selected);
         option(tr('[ 保存设置，变动账号暂停 ]'), fields.length + 2, settings.selected, 'good');
-        hint = '↑↓ 选择 · Enter 编辑/切换/保存'; extra = 'Esc 放弃草稿 · F2 暂停';
+        hint = '↑↓ 循环 · Home/End 首尾 · Enter 编辑/切换/保存'; extra = 'Esc 放弃草稿 · F2 暂停';
         break;
       }
       case 'languages':
@@ -672,8 +688,10 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     focusModal();
     const count = selected.kind === 'login' || selected.kind === 'languages' ? 2 : selected.kind === 'settings' ? fields.length + 3 : selected.kind === 'accounts' ? selected.items.length + 1 : selected.models.length;
     const page = selected.kind === 'models' ? modelCapacity : selected.kind === 'accounts' ? accountCapacity : menuCapacity;
-    if (key.name === 'up' || key.name === 'pageup') selected.selected = Math.max(0, selected.selected - (key.name === 'pageup' ? page : 1));
-    if (key.name === 'down' || key.name === 'pagedown') selected.selected = Math.min(count - 1, selected.selected + (key.name === 'pagedown' ? page : 1));
+    if (key.name === 'up' && selected.kind === 'settings' && selected.selected === 0) selected.selected = count - 1;
+    else if (key.name === 'up' || key.name === 'pageup') selected.selected = Math.max(0, selected.selected - (key.name === 'pageup' ? page : 1));
+    if (key.name === 'down' && selected.kind === 'settings' && selected.selected === count - 1) selected.selected = 0;
+    else if (key.name === 'down' || key.name === 'pagedown') selected.selected = Math.min(count - 1, selected.selected + (key.name === 'pagedown' ? page : 1));
     if (key.name === 'home') selected.selected = 0;
     if (key.name === 'end') selected.selected = count - 1;
     if (key.name === 'return' || key.name === 'enter') {

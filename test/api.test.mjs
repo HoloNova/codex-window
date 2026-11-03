@@ -2,12 +2,32 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { Auth, credentials, deviceAction } from '../dist/auth.js';
+import { Auth, authorizationUrl, credentials, deviceAction } from '../dist/auth.js';
 import { Api, verifyCompletion } from '../dist/api.js';
 import { now, tryLock } from '../dist/state.js';
 import { models as accountModels } from '../dist/actions.js';
 import { fixture, wireUsage, tokenReply, json, completed } from './helpers.mjs';
 
+test('browser authorization requests identity and offline renewal without connector access', () => {
+  const redirect = 'http://localhost:1455/auth/callback';
+  const url = authorizationUrl('https://issuer.example.invalid', redirect, 'test-pkce-challenge', 'test-state+nonce');
+  assert.equal(url.origin + url.pathname, 'https://issuer.example.invalid/oauth/authorize');
+  assert.deepEqual(url.searchParams.get('scope').split(' '), ['openid', 'profile', 'email', 'offline_access']);
+  assert.equal(url.searchParams.get('response_type'), 'code');
+  assert.equal(url.searchParams.get('redirect_uri'), redirect);
+  assert.equal(url.searchParams.get('code_challenge'), 'test-pkce-challenge');
+  assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
+  assert.equal(url.searchParams.get('state'), 'test-state+nonce');
+});
+test('rejected reduced device scope never widens authorization or changes the existing login', async t => {
+  const f = await fixture(t, (_call, response) => json(response, { error: 'invalid_scope' }, 400));
+  const previous = readFileSync(f.auth.path, 'utf8');
+  await assert.rejects(f.auth.deviceLogin(() => {}), /400/);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].path, '/api/accounts/deviceauth/usercode');
+  assert.deepEqual(JSON.parse(f.calls[0].body).scope.split(' '), ['openid', 'profile', 'email', 'offline_access']);
+  assert.equal(readFileSync(f.auth.path, 'utf8'), previous);
+});
 test('expired credentials rotate once and are saved before subsequent usage reads', async t => {
   let rotated = false;
   const f = await fixture(t, (call, response) => {
@@ -20,6 +40,7 @@ test('expired credentials rotate once and are saved before subsequent usage read
   const refresh = new URLSearchParams(f.calls[0].body);
   assert.equal(refresh.get('grant_type'), 'refresh_token');
   assert.equal(refresh.get('refresh_token'), 'test-initial-refresh');
+  assert.equal(refresh.has('scope'), false);
   assert.equal(f.auth.load().needsLogin, false);
 });
 test('a usage 401 permits exactly one refresh and read retry', async t => {
@@ -140,7 +161,10 @@ test('account changes during a catalog request cannot poison the next account ca
 test('device flow accepts the server-prefixed pending code and exchanges once', async t => {
   let polls = 0;
   const f = await fixture(t, (call, response) => {
-    if (call.path.endsWith('/usercode')) json(response, { device_auth_id: 'test-device', user_code: 'TEST-CODE', interval: '1' });
+    if (call.path.endsWith('/usercode')) {
+      assert.deepEqual(JSON.parse(call.body).scope.split(' '), ['openid', 'profile', 'email', 'offline_access']);
+      json(response, { device_auth_id: 'test-device', user_code: 'TEST-CODE', interval: '1' });
+    }
     else if (call.path.endsWith('/deviceauth/token')) {
       if (++polls === 1) json(response, { error: { code: 'deviceauth_authorization_pending' } }, 400);
       else json(response, { authorization_code: 'test-code', code_challenge: 'challenge', code_verifier: 'verifier' });

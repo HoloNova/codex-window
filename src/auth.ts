@@ -10,7 +10,14 @@ import { Http, HttpError, jsonPost, parseJson } from './http.js';
 import { translate } from './i18n.js';
 
 const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
-const SCOPE = 'openid profile email offline_access api.connectors.read api.connectors.invoke';
+// This scheduler uses identity and token renewal, not connectors. Never widen
+// a rejected login silently; existing grants are left untouched.
+const SCOPE = 'openid profile email offline_access';
+export function authorizationUrl(issuer: string, redirect: string, challenge: string, state: string): URL {
+  const url = new URL(`${issuer}/oauth/authorize`);
+  url.search = new URLSearchParams({ response_type: 'code', client_id: CLIENT_ID, redirect_uri: redirect, scope: SCOPE, code_challenge: challenge, code_challenge_method: 'S256', id_token_add_organizations: 'true', codex_cli_simplified_flow: 'true', state, originator: 'codex_cli_rs' }).toString();
+  return url;
+}
 export interface Credentials {
   version: 1;
   accessToken: string;
@@ -160,8 +167,7 @@ export class Auth {
     }
     if (!port) throw new Error('本地登录端口 1455/1457 被占用，请使用设备码登录');
     const redirect = `http://localhost:${port}/auth/callback`;
-    const url = new URL(`${this.http.urls.issuer}/oauth/authorize`);
-    url.search = new URLSearchParams({ response_type: 'code', client_id: CLIENT_ID, redirect_uri: redirect, scope: SCOPE, code_challenge: challenge, code_challenge_method: 'S256', id_token_add_organizations: 'true', codex_cli_simplified_flow: 'true', state, originator: 'codex_cli_rs' }).toString();
+    const url = authorizationUrl(this.http.urls.issuer, redirect, challenge, state);
     const cancelled = signal ? AbortSignal.any([AbortSignal.timeout(600_000), signal]) : AbortSignal.timeout(600_000);
     try {
       const code = await new Promise<string>((resolve, reject) => {
