@@ -46,7 +46,7 @@ jobs:
       - name: Build Linux executable
         if: runner.os == 'Linux'
         run: npm run package
-      - name: Build Windows core and native tray launcher
+      - name: Build Windows single-file application
         if: runner.os == 'Windows'
         shell: cmd
         run: |
@@ -56,15 +56,16 @@ jobs:
           npm run package
       - name: Check isolated executable without UI or credentials
         run: npm run check:package
-      - run: npm run archive
+      - run: npm run release:files
       - uses: actions/upload-artifact@v4
         with:
           name: codex-window-${{ matrix.target }}
           path: |
-            .artifacts/codex-window-${{ matrix.target }}.zip
-            .artifacts/codex-window-${{ matrix.target }}.tar.gz
-            .artifacts/codex-window-${{ matrix.target }}.*.sha256
-          # The allowlisted archives live under the hidden .artifacts directory.
+            .artifacts/CodexWindow.exe
+            .artifacts/CodexWindow.exe.sha256
+            .artifacts/codex-window
+            .artifacts/codex-window.sha256
+          # Only direct executables/checksums, never staging or account folders.
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14

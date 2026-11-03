@@ -99,8 +99,8 @@ export class Terminal {
   private mouse = false;
   private readonly keyboard: Keyboard;
   private readonly onDrain = (): void => { this.draining = false; if (this.active) this.onResize(); };
-  constructor(readonly onKey: (text: string, key: Key) => void, readonly onResize: () => void, onScroll: (delta: number) => void = () => {}) {
-    this.keyboard = new Keyboard(onKey, onScroll);
+  constructor(readonly onKey: (text: string, key: Key) => void, readonly onResize: () => void, onScroll: (delta: number) => void = () => {}, onClick: (x: number, y: number) => void = () => {}) {
+    this.keyboard = new Keyboard(onKey, onScroll, onClick);
   }
   get width(): number { return Math.max(1, (process.stdout.columns || 80) - 1); }
   get height(): number { return Math.max(1, (process.stdout.rows || 24) - 1); }
@@ -118,17 +118,17 @@ export class Terminal {
     this.mouse = enabled;
     process.stdout.write(enabled ? '\x1b[?1000h\x1b[?1006h' : '\x1b[?1000l\x1b[?1006l');
   }
-  render(lines: string[]): void {
-    if (!this.active || this.draining) return;
+  render(lines: string[]): boolean {
+    if (!this.active || this.draining) return false;
     const width = this.width, height = this.height;
     const screen = Array.from({ length: height }, (_, row) => fit(lines[row] ?? '', width));
     const full = this.previousWidth !== width || this.previousHeight !== height;
     const changed = screen.map((line, row) => full || line !== this.previous[row]);
-    if (!changed.some(Boolean)) return;
+    if (!changed.some(Boolean)) return true;
     if (process.stdout.writableNeedDrain) {
       this.draining = true;
       process.stdout.once('drain', this.onDrain);
-      return;
+      return false;
     }
     let output = '\x1b[?2026h' + (full ? '\x1b[2J' : '');
     for (let row = 0; row < height; row++) {
@@ -136,6 +136,7 @@ export class Terminal {
     }
     process.stdout.write(output + '\x1b[?25l\x1b[?2026l');
     this.previous = screen; this.previousWidth = width; this.previousHeight = height;
+    return true;
   }
   stop(): void {
     if (!this.active) return;

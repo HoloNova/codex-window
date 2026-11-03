@@ -123,7 +123,7 @@ export const messages: Record<string, string> = {
   '没有匹配的时区。': 'No matching time zones.', '输入搜索 · ↑↓/滚轮 选择 · Enter 确认': 'Type to search · ↑↓/Wheel Select · Enter Confirm',
   'Ctrl+U 清空搜索 · Esc 返回设置': 'Ctrl+U Clear search · Esc Settings',
   '同步开启：保存影响所有账号。': 'Sync enabled: saving affects all accounts.', '同步关闭：只保存当前账号。': 'Sync disabled: only this account is changed.',
-  '未选择': 'Not selected', '同步账号设置  {0}': 'Sync account settings  {0}', '开启': 'On', '关闭': 'Off',
+  '未选择': 'Not selected', '同步账号设置': 'Sync account settings', '同步账号设置  {0}': 'Sync account settings  {0}', '开启': 'On', '关闭': 'Off',
   '[ 保存设置，变动账号暂停 ]': '[ Save settings; changed accounts pause ]',
   '↑↓ 选择 · Enter 编辑/切换/保存': '↑↓ Select · Enter Edit/Toggle/Save', 'Esc 放弃草稿 · F2 暂停': 'Esc Discard draft · F2 Pause',
   '↑↓ 循环 · Home/End 首尾 · Enter 编辑/切换/保存': '↑↓ Wrap · Home/End First/Last · Enter Edit/Toggle/Save',
@@ -169,7 +169,8 @@ export const messages: Record<string, string> = {
   '账号 {0}：{1}': 'Account {0}: {1}', '账号数据不可用：{0}': 'Account data unavailable: {0}',
   '旧后台仍在退出，请稍后重试': 'The older backend is still exiting; try again shortly',
   '后台启动失败，请检查独立数据目录中的 worker.log': 'Backend startup failed; check worker.log in the data directory',
-  '界面语言': 'Interface language', '语言仅影响显示，不暂停账号，也不参与设置同步。': 'Language affects display only; accounts and settings sync are unchanged.',
+  '界面语言': 'Interface language',
+  '语言仅影响显示，不暂停账号，也不参与设置同步。': 'Language affects display only; accounts and settings sync are unchanged.',
   '正在退出应用；等待已开始的操作安全完成。': 'Exiting application; finishing in-flight work safely…',
   '语言已保存。': 'Language saved.', '选择语言': 'Select language', '简体中文': '简体中文',
   'preferences.json 无效；language 应为 en 或 zh-CN，文件未被覆盖。': 'Invalid preferences.json; expected language en or zh-CN. The file was not overwritten.',
@@ -204,10 +205,12 @@ export const helpText = {
   codex-window stop            Pause all accounts and stop the backend
   codex-window quit            Exit this application's sessions; preserve account settings
   codex-window run             Run the scheduler in the foreground
+  codex-window --license       Show application and bundled runtime licenses
+  codex-window --version       Show version and build information
 
 Global: --home PATH selects a dedicated data directory; --account ID selects an account.
 New accounts start paused. Settings sync defaults to on; changed accounts pause.
-Windows: launch CodexWindow.exe for the tray, with Open panel and Exit application.
+Windows: double-click CodexWindow.exe to open the TUI and keep the tray.
 `,
   'zh-CN': `Codex Window · 独立登录与多账户开窗调度（Node.js 24+ 或自带运行时）
 
@@ -227,10 +230,12 @@ Windows: launch CodexWindow.exe for the tray, with Open panel and Exit applicati
   codex-window stop            暂停所有账号并停止后台
   codex-window quit            退出本应用的面板与后台，保留账号设置
   codex-window run             前台运行调度器
+  codex-window --license       查看产品与内置运行时许可证
+  codex-window --version       查看版本和构建信息
 
 全局：--home PATH 指定独立数据目录；--account ID 选择账号。
 新账号默认暂停，设置同步默认开启，配置实际变化的账号暂停。
-Windows 请运行 CodexWindow.exe，从托盘打开面板或退出应用。
+Windows 双击 CodexWindow.exe 打开 TUI，并保留托盘。
 `,
 };
 export const nestedMessages: Record<string, number[]> = {

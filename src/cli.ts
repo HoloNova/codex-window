@@ -14,7 +14,7 @@ import { runTui } from './tui.js';
 import { Preferences } from './preferences.js';
 import { getLanguage, setLanguage, translate, validLanguage } from './i18n.js';
 import { ApplicationSession, applicationPermits, hasRegisteredWorker, quitApplication } from './application.js';
-import { nativeTrayPath, packaged } from './runtime.js';
+import { licenseText, nativeTrayPath, packaged, versionText } from './runtime.js';
 
 import { helpText } from './messages.js';
 const print = (value: string): void => { console.log(translate(value)); };
@@ -24,9 +24,11 @@ async function main(): Promise<void> {
     options: {
       home: { type: 'string' }, account: { type: 'string' }, add: { type: 'boolean' }, browser: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
       model: { type: 'string' }, timezone: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, interval: { type: 'string' }, 'sync-settings': { type: 'string' },
-      'app-generation': { type: 'string' },
+      'app-generation': { type: 'string' }, license: { type: 'boolean' }, version: { type: 'boolean', short: 'v' },
     },
   });
+  if (values.license) { console.log(licenseText()); return; }
+  if (values.version) { console.log(versionText()); return; }
   const home = values.home ?? process.env.CODEX_WINDOW_HOME ?? join(homedir(), '.codex-window-node');
   const preferences = new Preferences(home);
   try { preferences.load(); }

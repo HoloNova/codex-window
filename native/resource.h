@@ -2,5 +2,6 @@
 #define CODEX_WINDOW_RESOURCE_H
 
 #define IDI_CODEX_WINDOW 101
+#define IDR_CODEX_CORE 102
 
 #endif

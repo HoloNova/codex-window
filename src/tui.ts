@@ -93,6 +93,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
   let homeOffset = 0, homeMax = 0, homeCapacity = 1;
   const modalViews = new WeakMap<Screen, { offset: number; focus: string }>();
   let lastModal: Screen | undefined;
+  let menuHit: { screen: Screen; x: number; width: number; columns: number; height: number; rows: Map<number, number>; cover?: Rect } | undefined;
   const time = (at: number | null): string => {
     if (!at || !state) return '—';
     const zoneKey = `${state.settings.timezone}:${getLanguage()}`;
@@ -283,11 +284,13 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     const innerWidth = Math.max(1, modalWidth - (bordered ? 4 : 0));
     const contentWidth = Math.max(1, innerWidth - (innerWidth >= 6 ? 2 : 0));
     let title = '', body: string[] = [], pinned: string[] = [], focusStart = 0, focusEnd = 0, focus = '';
+    const options: { start: number; end: number; index: number }[] = [];
     let hint = '↑↓ 选择 · Enter 确认 · Esc 返回', extra = 'F2 暂停 · Ctrl+C 连按两次退出';
     const add = (line: string): void => { body.push(...reflow([line], contentWidth)); };
     const option = (label: string, index: number, selected: number, tone: Tone = 'normal'): void => {
       const start = body.length;
       add(color(`${index === selected ? '›' : ' '} ${label}`, index === selected ? 'accent' : tone, index === selected));
+      options.push({ start, end: body.length, index });
       if (index === selected) { focusStart = start; focusEnd = body.length - 1; }
     };
     switch (screen.kind) {
@@ -328,12 +331,16 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
       case 'settings': {
         const settings = screen; title = '设置'; focus = String(settings.selected);
         add(paint(settings.syncSettings ? '同步开启：保存影响所有账号。' : '同步关闭：只保存当前账号。', 'muted'));
-        fields.forEach((field, i) => {
-          const label = contentWidth >= 36 ? pad(tr(field.label), 22) : tr(field.label);
-          option(`${label}  ${String(settings.draft[field.key]) || tr('未选择')}`, i, settings.selected);
+        const entries = [
+          ...fields.map(field => [tr(field.label), String(settings.draft[field.key]) || tr('未选择')]),
+          [tr('同步账号设置'), tr(settings.syncSettings ? '开启' : '关闭')],
+          [tr('界面语言'), getLanguage() === 'en' ? 'English' : '简体中文'],
+        ];
+        const labelWidth = Math.max(...entries.map(([label]) => widthOf(label!)));
+        entries.forEach(([label, value], i) => {
+          const row = contentWidth >= labelWidth + 8 ? `${pad(label!, labelWidth)}  ${value}` : `${label}\n  ${value}`;
+          option(row, i, settings.selected);
         });
-        option(tr(`同步账号设置  ${tr(settings.syncSettings ? '开启' : '关闭')}`), fields.length, settings.selected);
-        option(`${tr('界面语言')}  ${getLanguage() === 'en' ? 'English' : '简体中文'}`, fields.length + 1, settings.selected);
         option(tr('[ 保存设置，变动账号暂停 ]'), fields.length + 2, settings.selected, 'good');
         hint = '↑↓ 循环 · Home/End 首尾 · Enter 编辑/切换/保存'; extra = 'Esc 放弃草稿 · F2 暂停';
         break;
@@ -379,6 +386,14 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
       if (focusEnd >= offset + capacity) offset = focusEnd - focusStart >= capacity ? focusStart : focusEnd - capacity + 1;
     }
     offset = Math.max(0, Math.min(max, offset)); modalViews.set(screen, { offset, focus: key }); lastModal = screen;
+    // Hit rows use the same wrapped body, scroll offset and centered geometry
+    // as the visible frame. A click selects only; Enter remains the action gate.
+    const hitRows = new Map<number, number>();
+    const bodyY = Math.max(0, Math.floor((height - modalHeight) / 2)) + (bordered ? 1 : 0) + pinned.length;
+    for (const item of options) {
+      for (let row = Math.max(item.start, offset); row < Math.min(item.end, offset + capacity); row++) hitRows.set(bodyY + row - offset, item.index);
+    }
+    menuHit = { screen, rows: hitRows, x: Math.max(0, Math.floor((width - modalWidth) / 2)) + (bordered ? 2 : 0), width: contentWidth, columns: width, height };
     modelCapacity = accountCapacity = menuCapacity = waitCapacity = capacity;
     const footer = [paint(contentWidth >= 28 ? hint : '↑↓ Enter · Esc', 'muted'), paint(contentWidth >= 42 ? `${tr(extra)} · ${tr('Shift+↑↓ 翻阅')}` : contentWidth >= 28 ? 'Shift+↑↓ 翻阅 · Ctrl+C×2 退出' : 'Shift+↑↓ · Esc', 'muted')].slice(0, footerCount);
     return box(modalWidth, modalHeight, title, [...pinned, ...scrollRows(body, offset, capacity, innerWidth), ...footer], 'accent', bordered);
@@ -395,9 +410,12 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     const y = Math.max(0, Math.min(canvas.length - 1, area.y + area.height - 1 - margin));
     // Replace the occupied cells, including any log text beneath the toast.
     // No border or background; the original frame returns when it expires.
-    place(canvas, [line], Math.max(0, right - widthOf(line)), y, widthOf(line));
+    const x = Math.max(0, right - widthOf(line));
+    if (menuHit) menuHit.cover = { x, y, width: widthOf(line), height: 1 };
+    place(canvas, [line], x, y, widthOf(line));
   };
   const frame = (): string[] => {
+    menuHit = undefined;
     const width = terminal.width, height = terminal.height;
     const home = screen.kind === 'logs' ? null : homeFrame(width, height);
     const canvas = home?.canvas ?? titleFrame(width, height);
@@ -430,8 +448,8 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
         try {
           const rows = frame();
           terminal.trackMouse(screen.kind !== 'home' || homeMax > 0);
-          terminal.render(rows);
-        } catch (e) { terminal.render([paint(errorMessage(e), 'bad'), tr('Ctrl+C 连按两次退出')]); }
+          if (!terminal.render(rows)) menuHit = undefined;
+        } catch (e) { menuHit = undefined; terminal.render([paint(errorMessage(e), 'bad'), tr('Ctrl+C 连按两次退出')]); }
       }
     });
   };
@@ -574,6 +592,16 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     else if (screen.kind === 'settings' || screen.kind === 'login' || screen.kind === 'languages') { screen.selected = Math.max(0, Math.min(screen.kind === 'settings' ? fields.length + 2 : 1, screen.selected + delta)); requestRender(); }
     else if (screen.kind === 'edit') scrollModal(delta);
     else if (screen.kind === 'wait') { screen.offset = Math.max(0, screen.offset + delta); requestRender(); }
+  };
+  const onClick = (x: number, y: number): void => {
+    if (closed || pasting || exiting) return;
+    resetExit();
+    const hit = menuHit;
+    if (!hit || hit.screen !== screen || hit.columns !== terminal.width || hit.height !== terminal.height || x < hit.x || x >= hit.x + hit.width || !('selected' in screen)) return;
+    if (hit.cover && y === hit.cover.y && x >= hit.cover.x && x < hit.cover.x + hit.cover.width) return;
+    const selected = hit.rows.get(y);
+    if (selected === undefined) return;
+    screen.selected = selected; focusModal(); requestRender();
   };
   const onKey = (text: string, key: Key): void => {
     if (closed || !key) return;
@@ -745,6 +773,9 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     catch (e) { report(errorMessage(e), 'bad'); }
   }, requestRender, delta => {
     try { onScroll(delta); }
+    catch (e) { report(errorMessage(e), 'bad'); }
+  }, (x, y) => {
+    try { onClick(x, y); }
     catch (e) { report(errorMessage(e), 'bad'); }
   });
   let watcher: FSWatcher | undefined, rootWatcher: FSWatcher | undefined;

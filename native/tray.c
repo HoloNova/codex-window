@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "resource.h"
+#include "payload.h"
 
 #define WM_TRAY (WM_APP + 1)
 #define WM_JOB_DONE (WM_APP + 2)
@@ -81,6 +82,26 @@ static HANDLE launch(const WCHAR *verb, int console, const WCHAR *log_path) {
     if (input != INVALID_HANDLE_VALUE) CloseHandle(input);
     if (!ok) return NULL;
     CloseHandle(process.hThread); return process.hProcess;
+}
+/* Explicit CLI calls never register a window or tray, including package checks. */
+static int forward_cli(int argc, WCHAR **argv) {
+    WCHAR command[32768] = L""; STARTUPINFOW startup; PROCESS_INFORMATION process;
+    ZeroMemory(&startup, sizeof(startup)); startup.cb = (DWORD)sizeof(startup);
+    ZeroMemory(&process, sizeof(process));
+    if (!argument(command, ARRAYSIZE(command), core)) return 1;
+    for (int i = 1; i < argc; i++) if (!argument(command, ARRAYSIZE(command), argv[i])) return 1;
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE); startup.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE); startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    if (!CreateProcessW(core, command, NULL, NULL, TRUE, GetConsoleWindow() ? 0 : CREATE_NO_WINDOW, NULL, NULL, &startup, &process)) return 1;
+    CloseHandle(process.hThread);
+    DWORD code = 1;
+    if (WaitForSingleObject(process.hProcess, INFINITE) == WAIT_OBJECT_0) GetExitCodeProcess(process.hProcess, &code);
+    CloseHandle(process.hProcess); return (int)code;
+}
+static int bundled_core(HINSTANCE instance) {
+    WCHAR launcher[PATH_CAP]; DWORD size = GetModuleFileNameW(NULL, launcher, PATH_CAP);
+    if (!size || size >= PATH_CAP || !SetEnvironmentVariableW(L"CODEX_WINDOW_LAUNCHER", launcher)) return 0;
+    return prepare_core(instance, core, PATH_CAP);
 }
 static VOID CALLBACK job_finished(PVOID context, BOOLEAN timed_out) {
     (void)context; (void)timed_out; PostMessageW(window_handle, WM_JOB_DONE, 0, 0);
@@ -170,7 +191,7 @@ static LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wparam, LPARAM
 }
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, int show) {
     (void)previous; (void)command_line; (void)show;
-    int argc = 0, close_only = 0; WCHAR requested[PATH_CAP] = L"";
+    int argc = 0, close_only = 0, headless = 0; WCHAR requested[PATH_CAP] = L"";
     WCHAR **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (!argv) return 1;
     for (int i = 1; i < argc; i++) {
@@ -178,9 +199,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
         else if (wcscmp(argv[i], L"--home") == 0 && i + 1 < argc) {
             if (wcslen(argv[++i]) >= PATH_CAP) { LocalFree(argv); return 1; }
             wcscpy_s(requested, PATH_CAP, argv[i]);
-        } else { LocalFree(argv); return 1; }
+        } else headless = 1;
     }
-    LocalFree(argv);
+    if (headless && close_only) { LocalFree(argv); return 1; }
     if (!requested[0]) {
         DWORD size = GetEnvironmentVariableW(L"CODEX_WINDOW_HOME", requested, PATH_CAP);
         if (size >= PATH_CAP) return 1;
@@ -197,6 +218,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     for (size_t i = 0; normalized[i]; i++) { if (normalized[i] == L'/') normalized[i] = L'\\'; hash ^= (uint64_t)normalized[i]; hash *= UINT64_C(1099511628211); }
     _snwprintf_s(class_name, ARRAYSIZE(class_name), _TRUNCATE, L"CodexWindowTray_%016llx", (unsigned long long)hash);
     if (close_only) {
+        LocalFree(argv);
         HWND existing = FindWindowW(class_name, NULL);
         if (!existing) return 0;
         DWORD pid = 0; GetWindowThreadProcessId(existing, &pid);
@@ -206,6 +228,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
         DWORD result = WaitForSingleObject(process, 5000); CloseHandle(process);
         return result == WAIT_OBJECT_0 ? 0 : 1;
     }
+    if (headless) {
+        HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+        if ((!output || output == INVALID_HANDLE_VALUE) && !GetConsoleWindow()) AttachConsole(ATTACH_PARENT_PROCESS);
+        if (!bundled_core(instance)) {
+            static const char error[] = "Could not prepare the bundled core. Check LOCALAPPDATA cache permissions and close the old application before retrying.\n";
+            DWORD written; WriteFile(GetStdHandle(STD_ERROR_HANDLE), error, (DWORD)sizeof(error) - 1, &written, NULL);
+            LocalFree(argv); return 1;
+        }
+        int code = forward_cli(argc, argv); LocalFree(argv); return code;
+    }
+    LocalFree(argv);
     WCHAR mutex_name[128]; _snwprintf_s(mutex_name, ARRAYSIZE(mutex_name), _TRUNCATE, L"Local\\%s", class_name);
     singleton = CreateMutexW(NULL, TRUE, mutex_name);
     if (!singleton) return 1;
@@ -218,13 +251,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
         }
         CloseHandle(singleton); return 0;
     }
-    DWORD path_size = GetModuleFileNameW(NULL, core, PATH_CAP);
-    if (!path_size || path_size >= PATH_CAP) { CloseHandle(singleton); return 1; }
-    WCHAR *slash = wcsrchr(core, L'\\');
-    if (!slash) { CloseHandle(singleton); return 1; }
-    slash[1] = 0;
-    if (wcscat_s(core, PATH_CAP, L"codex-window-core.exe") != 0 || GetFileAttributesW(core) == INVALID_FILE_ATTRIBUTES) {
-        show_error(L"codex-window-core.exe is missing. Extract the entire release package.", L"缺少 codex-window-core.exe，请完整解压发行包。"); CloseHandle(singleton); return 1;
+    if (!bundled_core(instance)) {
+        show_error(L"Could not prepare the bundled core. Check LOCALAPPDATA cache permissions and close the old application before retrying.", L"无法释放内置核心，请检查 LOCALAPPDATA 缓存权限，并退出旧应用后重试。"); CloseHandle(singleton); return 1;
     }
     app_instance = instance;
     WNDCLASSW klass; ZeroMemory(&klass, sizeof(klass)); klass.lpfnWndProc = procedure; klass.hInstance = app_instance; klass.lpszClassName = class_name;

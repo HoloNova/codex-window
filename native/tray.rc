@@ -1,3 +1,4 @@
 #include "resource.h"
 
 IDI_CODEX_WINDOW ICON "icon.ico"
+#include "payload.rc"

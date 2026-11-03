@@ -24,7 +24,7 @@ export class Keyboard {
       }
     }
   };
-  constructor(readonly onKey: (text: string, key: Key) => void, readonly onScroll: (delta: number) => void = () => {}) {}
+  constructor(readonly onKey: (text: string, key: Key) => void, readonly onScroll: (delta: number) => void = () => {}, readonly onClick: (x: number, y: number) => void = () => {}) {}
   start(): void {
     this.active = true;
     emitKeypressEvents(this.keys);
@@ -62,13 +62,18 @@ export class Keyboard {
       }
       if (sequence) {
         this.pending = this.pending.slice(sequence.length);
-        const mouse = sequence.match(/^\x1b\[<(\d+);\d+;\d+([mM])$/);
+        const mouse = sequence.match(/^\x1b\[<(\d+);(\d+);(\d+)([mM])$/);
         const button = mouse ? Number(mouse[1]) : sequence.startsWith('\x1b[M') ? sequence.charCodeAt(3) - 32 : null;
         if (button !== null) {
           const wheel = button & 0xc3;
-          if (!mouse || mouse[2] === 'M') {
+          if (!mouse || mouse[4] === 'M') {
             if (wheel === 64) this.onScroll(-3);
             if (wheel === 65) this.onScroll(3);
+            if (button === 0) {
+              const x = mouse ? Number(mouse[2]) - 1 : sequence.charCodeAt(4) - 33;
+              const y = mouse ? Number(mouse[3]) - 1 : sequence.charCodeAt(5) - 33;
+              if (Number.isSafeInteger(x) && Number.isSafeInteger(y) && x >= 0 && y >= 0) this.onClick(x, y);
+            }
           }
         } else this.keys.write(sequence);
         continue;
