@@ -54,8 +54,18 @@
 - 注入器输出 `.note`/`.note.100` section-name 警告；没有隐藏警告。随后独立可执行文件检查通过，不将其等同于所有平台/所有 ELF 工具兼容性已证明。
 - `npm run check:package`：将**仅二进制**复制到临时路径，使用含空格/中文的独立 home，验证帮助不创建数据、默认英文、后台启动与状态、安全退出保留 enabled/config、中文选择与错误。无 auth.json，无真实网络请求，也未运行 TUI/托盘。
 - `npm run archive`：生成 `.artifacts/codex-window-linux-x64.tar.gz`（约 42 MiB），二进制约 122 MiB；仅包含执行文件、LICENSE、NOTICE、匹配 Node 的许可证、README、构建信息和 SHA256SUMS。已查看 tar 文件列表，没有凭据、状态、源码路径下临时 home 或构建准备文件。
-- 当前版本的 Windows launcher 只写了源码与 CI 构建流程，本机无 Windows 编译器，**未编译、未启动 GUI、未运行 Windows CI**。没有签名证书或已发布安装包。
+- 本地验证阶段没有 Windows 编译器，未编译 Windows launcher、未启动 GUI；后续原生编译已在首次 GitHub CI 通过，见下节。没有签名证书或已发布安装包。
 - CI 改为 Linux/Windows 检查与平台打包、无头 smoke check、allowlist 归档、只读权限和 14 天 artifact；不创建 Release、不推送、不部署。macOS 为明确后置目标，不再承诺 CI/发行支持。
+
+## 首次 GitHub CI
+
+[运行 41573740157](https://github.com/HoloNova/codex-window/actions/runs/41573740157)，对应首次上传提交 `b005bf8`：
+
+- Linux：类型检查及 108 项非 UI 测试通过，无失败或跳过。
+- Windows：类型检查通过，106 项非 UI 测试通过，2 项因平台符号链接权限差异按现有规则跳过，无失败。
+- 两平台 SEA 编译、隔离可执行文件无头检查及归档通过；Windows 原生托盘也通过 MSVC 严格编译。没有运行 GUI 或真实账号请求。
+- 首次运行仅最终 artifact 上传失败：`actions/upload-artifact@v4` 默认 `include-hidden-files=false`，过滤了 `.artifacts` 中的归档。
+- 后续修正显式允许隐藏路径，但只匹配指定平台压缩包和校验和，不上传整个目录。最终上传结果以对应后续 Actions 运行为准；这不属于创建 Release。
 
 ## 既往合成资源实验
 
@@ -105,7 +115,7 @@
 - 最新快捷操作去重及启用/暂停切换、首页 3 行日志、宽屏右上角提示与订阅信息留白，以及缩放时的滚动；时区搜索选择的手感、极小尺寸下搜索栏/选中项，以及新配置错误的实际显示；不把非 UI 测试通过当作显示效果已验证。
 - 最新多账户 UI、真实多个账号同时运行、旧数据真实迁移，以及新语言/退出版本长期 CPU/RSS。Agent 未执行真实后台切换，本轮未操作真实账号和现有进程；不把历史短期采样当作新版长期资源保证。
 - 日志搜索和跨会话完整历史未实现。
-- Windows 原生托盘编译、权限/控制台行为、打开关闭再打开、退出应用、Unicode 路径和系统托盘恢复；Linux/Windows 新 CI 未推送执行。macOS 本轮明确不做官方支持。
+- Windows 托盘的真实权限/控制台行为、打开关闭再打开、退出应用、Unicode 路径和系统托盘恢复；原生编译及无头检查已在 CI 通过，不等于手动 UI 验收。macOS 本轮明确不做官方支持。
 - English/中文菜单、对齐、提示、弹窗、日志和语言切换不暂停的真实交互；Linux 打包 TUI 也未自动启动或人工验收。
 - 线上部署、停止或替换旧刷新服务。
 

@@ -2,7 +2,7 @@
 
 本次按已确认方案实现一个独立的 TypeScript + Node.js 小工具，不移植上游框架。
 
-状态：单账户完整基线已按授权提交为 `417a471`。后续多账户、设置同步、配置/事件驱动调度、自适应 TUI，以及本轮默认英文/语言设置、应用退出协议和 Linux/Windows 打包代码已本地实现。类型检查、构建与 108 项非 UI 测试通过，Linux 独立二进制检查与归档通过；Windows 原生编译/交互、新双语 UI 及真实长期流程仍待 CI/人工验收。不支持 macOS 官方包。用户已授权将当前版本提交并推送到 GitHub；上文为上传前的本地验证记录，线上 CI 结果以 GitHub Actions 为准。未执行真实账户操作、切换现有进程或创建 Release。详情：[多账户](MULTI_ACCOUNT.md)、[配置与调度](CONFIG_AND_SCHEDULING.md)、[发行与语言](DISTRIBUTION.md)、[验证](VERIFICATION.md)。
+状态：单账户完整基线已按授权提交为 `417a471`。后续多账户、设置同步、配置/事件驱动调度、自适应 TUI，以及本轮默认英文/语言设置、应用退出协议和 Linux/Windows 打包代码已本地实现。类型检查、构建与 108 项非 UI 测试通过，Linux 独立二进制检查与归档通过；Windows 原生编译和两平台无头检查已在首次 GitHub CI 通过；托盘交互、新双语 UI 及真实长期流程仍待人工验收。不支持 macOS 官方包。用户已授权将当前版本提交并推送到 GitHub；上文为上传前的本地验证记录，线上 CI 结果以 GitHub Actions 为准。未执行真实账户操作、切换现有进程或创建 Release。详情：[多账户](MULTI_ACCOUNT.md)、[配置与调度](CONFIG_AND_SCHEDULING.md)、[发行与语言](DISTRIBUTION.md)、[验证](VERIFICATION.md)。
 
 ## 主线
 

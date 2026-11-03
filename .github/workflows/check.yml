@@ -64,5 +64,7 @@ jobs:
             .artifacts/codex-window-${{ matrix.target }}.zip
             .artifacts/codex-window-${{ matrix.target }}.tar.gz
             .artifacts/codex-window-${{ matrix.target }}.*.sha256
+          # The allowlisted archives live under the hidden .artifacts directory.
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
