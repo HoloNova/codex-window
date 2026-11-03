@@ -6,17 +6,26 @@
   "type": "module",
   "license": "MIT",
   "repository": "https://github.com/HoloNova/codex-window",
-  "bin": { "codex-window": "dist/cli.js" },
-  "engines": { "node": ">=24.0.0" },
+  "bin": {
+    "codex-window": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit",
     "start": "node dist/cli.js",
     "dev": "npm run build && npm start",
-    "test": "npm run build && node --test --test-concurrency=1 test/*.test.mjs"
+    "test": "npm run build && node --test --test-concurrency=1 test/*.test.mjs",
+    "package": "node scripts/package.mjs",
+    "check:package": "node scripts/check-package.mjs",
+    "archive": "node scripts/archive.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
+    "esbuild": "0.28.2",
+    "postject": "1.0.0-alpha.6",
     "typescript": "5.9.3"
   }
 }

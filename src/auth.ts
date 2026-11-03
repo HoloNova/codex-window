@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { atomicJson, integer, now, object, text } from './state.js';
 import type { Store } from './state.js';
 import { Http, HttpError, jsonPost, parseJson } from './http.js';
+import { translate } from './i18n.js';
 
 const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const SCOPE = 'openid profile email offline_access api.connectors.read api.connectors.invoke';
@@ -101,7 +102,7 @@ export class Auth {
     });
     return credentials(data);
   }
-  async deviceLogin(announce: (message: string) => void, signal?: AbortSignal): Promise<void> {
+  async deviceLogin(announce: (message: string) => void, signal?: AbortSignal, accept: (value: Credentials) => Promise<void> | void = value => this.save(value)): Promise<void> {
     const deadline = AbortSignal.timeout(15 * 60_000);
     const cancelled = signal ? AbortSignal.any([deadline, signal]) : deadline;
     const root = this.http.urls.issuer;
@@ -132,12 +133,12 @@ export class Auth {
       const result = object(body);
       text(result.code_challenge);
       const authorized = await this.exchange(text(result.authorization_code), text(result.code_verifier), `${root}/deviceauth/callback`);
-      this.save(authorized);
+      await accept(authorized);
       return;
     }
     throw new Error('设备登录已取消或超时');
   }
-  async browserLogin(announce: (message: string) => void, signal?: AbortSignal): Promise<void> {
+  async browserLogin(announce: (message: string) => void, signal?: AbortSignal, accept: (value: Credentials) => Promise<void> | void = value => this.save(value)): Promise<void> {
     signal?.throwIfAborted();
     if (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) throw new Error('当前没有桌面会话，请使用设备码登录');
     const verifier = randomBytes(64).toString('base64url');
@@ -174,7 +175,7 @@ export class Auth {
           if (request.method !== 'GET' || callback.pathname !== '/auth/callback' || callback.searchParams.get('state') !== state) { response.writeHead(400).end('Invalid login callback'); return; }
           const code = callback.searchParams.get('code');
           if (!code) { response.writeHead(400).end('Authorization failed'); reject(new Error('浏览器授权失败')); return; }
-          response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }).end('授权已收到，可以关闭此页面并返回终端。');
+          response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }).end(translate('授权已收到，可以关闭此页面并返回终端。'));
           cancelled.removeEventListener('abort', aborted);
           resolve(code);
         });
@@ -185,7 +186,7 @@ export class Auth {
         child.on('error', () => {}); child.unref();
         if (cancelled.aborted) aborted();
       });
-      this.save(await this.exchange(code, verifier, redirect));
+      await accept(await this.exchange(code, verifier, redirect));
     } finally { server.close(); server.closeAllConnections(); }
   }
 }

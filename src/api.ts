@@ -42,7 +42,7 @@ export function verifyCompletion(body: string): void {
 export interface Model { id: string; name: string }
 export class Api {
   private modelCache: { accountId: string; expiresAt: number; models: Model[] } | null = null;
-  constructor(readonly auth: Auth, readonly retryDelays = [10_000, 30_000]) {}
+  constructor(readonly auth: Auth, readonly retryDelays = [10_000, 30_000], readonly executionAllowed: () => boolean = () => true) {}
   clearModels(): void { this.modelCache = null; }
   cachedModels(): Model[] | null {
     const cached = this.modelCache;
@@ -55,21 +55,24 @@ export class Api {
   private headers(auth: Credentials): Record<string, string> {
     return { authorization: `Bearer ${auth.accessToken}`, 'chatgpt-account-id': auth.accountId, 'user-agent': 'codex-window/0.1.0' };
   }
-  private async get(url: string, operation: string, signal?: AbortSignal): Promise<unknown> {
-    signal?.throwIfAborted();
+  private async get(url: string, operation: string, signal?: AbortSignal, permitted: () => boolean = () => true): Promise<unknown> {
+    const check = (): void => { signal?.throwIfAborted(); if (!this.executionAllowed() || !permitted()) throw new Error('账号操作已停止'); };
+    check();
     let credential = await this.auth.usable();
+    check();
     let response = await this.auth.http.request(operation, url, { headers: this.headers(credential) }, signal);
     if (response.status === 401) {
-      credential = await this.auth.usable(true);
+      check(); credential = await this.auth.usable(true);
+      check();
       response = await this.auth.http.request(operation, url, { headers: this.headers(credential) }, signal);
     }
     if (response.status === 401 || response.status === 403) this.auth.block();
     if (response.status < 200 || response.status >= 300) throw new HttpError(response.status, operation);
     return parseJson(response.body);
   }
-  async usage(signal?: AbortSignal): Promise<Usage> {
+  async usage(signal?: AbortSignal, permitted?: () => boolean): Promise<Usage> {
     for (let attempt = 0; ; attempt++) {
-      try { return parseUsage(await this.get(this.auth.http.urls.usage, '查询额度', signal)); }
+      try { return parseUsage(await this.get(this.auth.http.urls.usage, '查询额度', signal, permitted)); }
       catch (e) {
         const retryable = e instanceof NetworkError || (e instanceof HttpError && (e.status === 408 || e.status >= 500));
         if (!retryable || attempt >= this.retryDelays.length || signal?.aborted) throw e;
@@ -99,6 +102,7 @@ export class Api {
     return models.map(model => ({ ...model }));
   }
   async sendHello(credential: Credentials, model: string): Promise<void> {
+    if (!this.executionAllowed()) throw new Error('账号操作已停止');
     const request = jsonPost({
       model, instructions: 'You are a helpful assistant. Answer in one short sentence.',
       input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],

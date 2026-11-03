@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { allows, nextPoll, decide } from '../dist/schedule.js';
-import { defaults, validateSettings } from '../dist/state.js';
+import { defaults as deviceDefaults, validateSettings } from '../dist/state.js';
 import { parseUsage } from '../dist/api.js';
 import { wireUsage } from './helpers.mjs';
 
+const defaults = { ...deviceDefaults, timezone: 'Asia/Shanghai' };
 const at = Math.floor(Date.parse('2026-11-02T12:00:00+08:00') / 1000);
 const settings = { ...defaults, model: 'test-model', start: '00:00', end: '00:00' };
 const usage = remaining => parseUsage(wireUsage({ idle: false, remaining, at }), at);

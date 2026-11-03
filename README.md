@@ -1,131 +1,139 @@
 # Codex Window
 
-一个独立的 Codex 订阅额度开窗工具，使用 **TypeScript + Node.js**，界面只有 TUI。
+[简体中文](README.zh-CN.md)
 
-**登录 → 查询真实额度 → 按规则等待 → 必要时发一次 hello → 显示结果。**
+A small, unofficial **TypeScript + Node.js** subscription-window scheduler with a terminal UI.
 
-不需要 Pi、Codex CLI、Rust 或数据库。不读取、复制其他工具的登录凭证，不自动换号。当前单账户版本及 TUI 已获用户验收，作为单账户完整基线维护；真实续期、开窗及其他平台仍有待进一步验证。不是 OpenAI 官方产品。
+**Sign in → check real usage → wait → send one `hello` only when eligible → show local results.**
 
-## 运行
+It does not reset an active window or increase your allowance. Requests can consume quota. Subscription endpoints are not a stable public API and may change. This is not an OpenAI product.
 
-需要 Node.js 24+（建议最新 24.x）。运行时没有第三方依赖。
+## Run
+
+### Portable packages
+
+The packaging workflow builds **Windows x64** and **Linux x64** packages with Node included; users do not need Node/npm. Until a release is published, successful CI runs expose the packages as Actions artifacts.
+
+- **Windows 10/11 desktop:** extract the whole package, run `CodexWindow.exe`, then use the tray's **Open TUI** / **Exit application**. Keep `codex-window-core.exe` beside the launcher. Closing the panel does not stop the backend. Preview binaries are unsigned; do not disable security software to run them.
+- **Linux (glibc, e.g. Ubuntu 22.04+):** extract into a dedicated folder, then `chmod +x codex-window && ./codex-window`. No system service or automatic startup is installed.
+- No official macOS, ARM or Alpine/musl binary support in this preview. Source is not deliberately blocked, but those targets are unverified.
+
+The workflow builds artifacts and checksums, **not GitHub Releases**. Windows compilation/interaction and cross-platform CI must pass before calling the packages verified. See [distribution details](docs/DISTRIBUTION.md).
+
+### From source
+
+Requires **Node.js 24+**. Runtime code uses only Node's standard library; build tools are development dependencies.
 
 ```sh
-npm ci
+npm ci --ignore-scripts
 npm run build
-npm start
+node dist/cli.js
 ```
 
-在 TUI 中依次 **L 登录 → M 选择模型 → R 启用**。默认使用设备码登录，也可在有桌面的机器上选择浏览器登录。设备码流程需要账号允许设备码授权。
+`npm start` is equivalent but retains an extra npm process. Do not globally install over an older command or run two schedulers against the same real account, including Pi/Rust/other tools. This application never reads their credentials or replaces their services.
 
-首次默认暂停。登录、模型/设置修改都保持暂停，必须最后手动启用。一个账号、一个模型，不自动推断模型属于哪个额度池，请选择主五小时额度池的订阅模型。
+If an older backend is already running, close its panel and use its `stop` command once, wait for it to exit, then reopen the new version. This pauses accounts; credentials and pending outcomes remain. No live backend replacement is attempted.
 
-**当前机器上已有旧刷新服务时，不要直接再启用同账号的新调度器。** 独立凭证不代表独立额度；先决定由哪一套负责，避免互相影响。新版不会自动停止、替换或部署任何旧服务。也不要用全局安装覆盖旧的 `codex-window` 命令；验收时直接运行本目录的 `node dist/cli.js`。
+## First use and controls
 
-## 规则
+Use **L → sign in**, **M → select a main five-hour allowance model**, then **R → enable**. Device authorization requires the account to allow device-code login; browser authorization needs a desktop session.
 
-- 默认时区 `Asia/Shanghai`，允许发送时段 `04:30–19:30`。启动/启用先查一次，之后每 30 分钟在当地整点/半点查询。
-- 距重置超过一个查询间隔：等待；进入一个间隔内：安排一次“重置后 90 秒”复查。
-- 到点先重新查询；别人已开启新窗口就不发送。只有空闲、额度允许、在时段内且已启用时才发一条 `hello`。
-- 主窗口和周额度必须完整、有效；未知/过期/时间不一致时不猜测发送。
-- 查询暂时失败最多尝试三次，间隔 10 秒、30 秒；401 最多续期后重查一次，403/429 不反复重试。
-- 不做固定钟点兜底，不做五分钟重发链，不发送其他模型或额外额度池请求。
-- 发送前保存待确认标记；请求超时、响应不完整或窗口未确认时，不自动重发，重启也不丢失该标记。
-- 后续查询观察到有效活动窗口，或你按 **R** 明确复核并重新启用，才能解除待确认标记。R 会先等待正在进行的账号操作结束，再重新查询。
-
-小请求可能开启空闲窗口并消耗少量额度，**不能重置已有窗口，也不能增加额度**。订阅接口不是稳定的第三方 API，未来可能需要调整。
-
-## TUI
-
-| 按键 | 功能 |
+| Key | Action |
 | --- | --- |
-| L | 独立登录；先暂停自动发送 |
-| M | 只读获取模型目录，选择一个模型；保存后保持暂停 |
-| S | 设置模型、时区、起止时间、查询间隔；保存后保持暂停 |
-| C | 只读查询，不发送或新建开窗任务 |
-| R | 复核先前待确认请求并启用；先查真实额度 |
-| I / F2 | 主页 I 或任意页面 F2：持久暂停，取消待执行计划；只读查询继续 |
-| X | 暂停并停止后台，等待已开始的请求和凭证保存完成 |
-| D | 查看本次面板会话的详细日志；只读，不改变启停状态 |
-| Esc | 返回上一步；主页不退出；等待页取消等待，编辑页放弃本项修改 |
-| Ctrl+C 两次 | 第一次提示，3 秒内第二次关闭面板；其他按键/超时清除确认，后台继续 |
+| A | Switch/add accounts; switching reads local cache only |
+| L | Sign in; pauses this account, saves by real identity |
+| M | Select model; five-minute per-account in-memory catalog cache |
+| S | Edit settings, sync switch, and global interface language |
+| C | Request a read-only usage check |
+| R | Review a pending outcome, enable this account, then check usage |
+| I / F2 | Pause this account; read-only checks continue |
+| X | **Pause all accounts and stop the backend** |
+| D | Scroll session logs; no account changes |
+| Esc | Return one step; discard the current edit/wait |
+| Ctrl+C twice | Close only the panel; confirm within 3 seconds |
 
-顶部居中显示 **Codex Window Autorefresh**，订阅信息、快捷操作和事件使用圆角卡片。宽度足够时快捷操作在右侧，窄屏时移到订阅卡片下方；短终端优先使用紧凑额度行，为事件区保留空间。最低需要 45 列、22 行。首页只展示账号、模型、额度及重置时间、启停状态等必要信息，不展示后台“开窗复查”或以“下一步”换名展示。
+The rounded-card layout adapts to width and scrolls vertically; there is no minimum-size lockout. Recent events preview three lines. The detailed log is a bounded panel-session view (up to 1000 entries, initially up to eight cached events), **not a complete persistent journal**. Search and full cross-session history are deferred.
 
-登录、模型选择、设置、字段编辑和授权等待使用首页上的居中圆角弹窗，不再切换到外部问答。菜单用 ↑↓/Enter；模型列表支持滚轮、PgUp/PgDn。设置先编辑草稿，逐项 Enter 确认后选择“保存设置”；从设置页 Esc 返回会放弃草稿。进入登录、选模型、设置前已经暂停，因此编辑期间不会自动发送。起止时间相同表示全天；支持跨午夜时段。查询间隔必须为 5–1440 分钟且能整除一天。
+**English is the default**, independent of time zone/system locale. Choose English / 简体中文 under S, or use `language en|zh-CN`. Language is global, does not sync account configuration, and does not pause accounts. Opening S is read-only; saving changed business settings pauses affected accounts. L/M still pause the current account. New messages can display in either language; older Chinese history is not rewritten.
 
-界面只重画变化的行，画面未变化时不写终端；只在首次显示或尺寸改变时清屏。普通按键收到后立即解析；单独 Esc 的组合键判断窗口为本地 10ms、SSH 100ms，不再使用 Node 默认的 500ms。方向键、功能键和粘贴标记按完整序列解析，UTF-8 和分包输入会缓冲重组。
+Quota is expressed as remaining percentage, with green/yellow/red and text labels; stale data is explicitly marked. `NO_COLOR=1` disables colors. Toasts have no border and expire after three seconds; the first Ctrl+C produces a red confirmation. UI/terminal interactions are manually tested, never automated.
 
-状态文件变化会立即通知面板，并合并同一轮通知；每 5 秒做一次本地兜底检查，不增加远端请求。模型目录在当前前台进程内按账号缓存 5 分钟，重复进入不联网，也不等待后台的账号请求锁；过期后重新获取，换账号或重新登录时失效，失败结果不缓存。
+## Accounts, configuration and safety
 
-| 元素 | 显示语义 |
-| --- | --- |
-| 五小时/周额度 | 显示**剩余**百分比；绿 → 黄 → 红渐变。≤30% 标“留意”，≤10% 标“偏低”，0% 标“耗尽” |
-| 普通时间/次要信息 | 灰色弱化；未来两分钟内的动作青色突出，到时标“已到时” |
-| 状态/提示 | 成功和启用为绿，等待为青，警告/待确认为黄，失败为红，暂停为中性色 |
-| 旧额度 | 灰色并明确标注“旧数据”，不使用绿色误示为当前可用 |
+- One backend process, independent per-account tasks. Slow or damaged accounts do not block healthy accounts. Real account identities are deduplicated; switching accounts does not fetch data.
+- New accounts start paused. **Settings sync defaults to on**: saving model, time zone, allowed hours or interval copies those settings to all accounts. Only changed accounts pause. Credentials, usage, enable flags and pending outcomes are never copied. With sync off, only the selected account changes.
+- Every account's `config.json` is the only source for its settings. Runtime results go to `state.json`, never back into configuration. Manual edits affect one account only, even if UI settings sync is on.
 
-颜色使用 ANSI SGR，按终端能力使用真彩、256 色或基础色；`NO_COLOR=1` 可关闭颜色。百分比、状态文字和标签始终保留，不依赖颜色判断。
+```json
+{
+  "app": "codex-window-config",
+  "version": 1,
+  "model": "MODEL_ID",
+  "timezone": "Asia/Shanghai",
+  "start": "04:30",
+  "end": "19:30",
+  "pollMinutes": 30,
+  "enabled": false
+}
+```
 
-反馈提示为右下角**无边框纯文字**，默认 3 秒：成功绿、警告黄、失败红、普通反馈青色。首页锚定事件卡片右下角，其他页面靠终端右下角；清理覆盖区域，不与底下日志叠字，消失后恢复原内容。Ctrl+C 第一次也是同一位置的红色提示；确认期间优先显示退出提示，其他按键或超时取消确认。
+The zone above is an example, not a fixed default. New settings use the **runtime device** zone (the server when using SSH); existing accounts keep their zone. Search the IANA list/UTC in settings. Equal start/end means all day; overnight hours work. Intervals must divide one day evenly and be 5–1440 minutes.
 
-按 **D** 打开日志页，滚轮/↑↓ 滚动，PgUp/PgDn 翻页，Home 到顶部，End 返回最新；右侧显示滚动条。位于底部时跟随新事件，向上翻阅后不抢回底部，Esc 返回。日志先载入后台已有的最近八条，再在当前面板进程内累计，最多 1000 条，长行按终端宽度折行。**这不是完整的持久历史**：关闭面板后会话记录不保留，关闭期间只能恢复后台最近八条。搜索、多账户和跨会话完整日志不在本轮范围。鼠标捕获仅在日志、模型列表和等待弹窗中启用，退出/离开后恢复；需要选择文本时可使用终端的 Shift 选择功能。
+The backend uses due timers, file notifications and a 30-second fallback—not 250ms polling. It re-reads configuration before sending. Invalid/missing configuration blocks sending for that account and is not overwritten. Do not save the same config concurrently in an editor and UI; editor writes cannot participate in the application's locks. Prefer atomic saves.
 
-关闭 TUI 不停止后台；暂停不会撤回已开始的请求。Esc 返回时，已开始的授权兑换/续期仍会安全保存，迟到的结果不会抢回页面。双 Ctrl+C 会恢复终端并退出前台，不因网络等待卡住；**如果此时正在凭证续期，下一次可能需要重新登录**，不会重试旧 Refresh Token。后台运行时不安装系统服务或开机启动项。
+By default, checks follow half-hour local slots. Near a reset, one check is scheduled for reset + 90 seconds. Already-active windows are left alone. Sending requires fresh, complete, consistent usage, sufficient allowance, permitted hours and an enabled account. No speculative sending or alternate-model probes.
 
-## 无界面使用
+A pending marker is saved **before** one model-specific `hello`. Unknown outcomes are not retried, including after a restart. A valid observed active window or explicit R review can clear it. Token rotation is saved before subsequent requests; ambiguous renewal requires sign-in, never replaying the old refresh token. Esc lets an already-started exchange finish saving; immediately closing a panel with double Ctrl+C can instead require sign-in again.
+
+## Headless commands and exit
+
+For a Linux package use `./codex-window`; from source substitute `node dist/cli.js`; on Windows use `.\codex-window-core.exe` in a terminal.
 
 ```sh
-node dist/cli.js login                  # 设备码登录
-node dist/cli.js login --browser        # 浏览器登录，需要桌面
-node dist/cli.js models                 # 只读模型目录
-node dist/cli.js config --model MODEL_ID
-node dist/cli.js start                  # 确保后台运行；发送状态保持不变
-node dist/cli.js resume                 # 复核并启用
-node dist/cli.js status                 # 仅本地状态，不联网
-node dist/cli.js check                  # 请求只读查询
-node dist/cli.js pause                  # 暂停，查询继续
-node dist/cli.js stop                   # 停止后台
-node dist/cli.js run                    # 前台运行调度器
+./codex-window accounts
+./codex-window login --add
+./codex-window config --sync-settings off
+./codex-window config --model MODEL_ID
+./codex-window start
+./codex-window status --account ID
+./codex-window language zh-CN
+./codex-window pause --account ID
+./codex-window quit
 ```
 
-所有命令支持 `--home PATH`；也可设置 `CODEX_WINDOW_HOME`。请使用全新独立目录，不指向 Pi、Codex 或旧 Rust 程序的数据目录。程序会拒绝用户主目录、磁盘根目录和非本工具的非空目录，不读取其中的凭证。
+`--home PATH` / `CODEX_WINDOW_HOME` selects a dedicated data home. Account commands accept `--account ID` (default `default`); global lifecycle commands do not. `--help` lists all commands.
 
-如网络需要代理，可通过 Node 自带的 `NODE_OPTIONS=--use-env-proxy` 让前台和后台共同使用 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`。私有 CA 使用 Node 的 `NODE_EXTRA_CA_CERTS`；不要关闭 TLS 验证。
+**`quit` / Windows Exit application:** cooperatively close this data home's panels/backend and wait for in-flight requests and credential saves; preserve enable flags and pending outcomes. Previously enabled accounts resume with fresh usage at next startup. No process is force-killed. A timed-out exit reports the problem instead of pretending success.
 
-## 本地数据与安全
+**`stop` / X:** pause all accounts and stop the backend. Next launch stays paused. Closing just the TUI leaves the backend running.
 
-默认目录：`~/.codex-window-node`，与旧 Rust 程序分开。
+Proxy support uses Node's `NODE_OPTIONS=--use-env-proxy` with `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`; custom CAs use `NODE_EXTRA_CA_CERTS`. Never disable TLS verification.
 
-- `auth.json`：本工具登录获得的明文凭证。Unix 文件 `0600` / 目录 `0700`，Windows 目录限制为当前用户和 SYSTEM。不要上传或分享。
-- `state.json`：设置、启停状态、最近额度、待确认标记和最近八条事件；不包含 Token。
-- `worker.log`：后台启动/退出错误。重新启动前超过 1 MiB 会截断；日常结果看 TUI 或 `status`。
-- `*.lock`：同一目录的后台、账号和文件修改互斥。活进程的锁不会被抢占；死进程的正常锁可恢复，损坏锁/残留恢复锁会拒绝操作而不是冒险发送。
+## Local data
 
-凭证续期只做一次，返回的新凭证先落盘，再进行后续请求。续期失败、丢失响应或进程在续期中崩溃时，要求重新登录，不重复提交可能已失效的 Refresh Token。
+Default: `~/.codex-window-node` (`USERPROFILE` on Windows), separate from release files and other tools.
 
-不要删除数据目录来排查重复请求，否则会丢失待确认记录。后台按源码 `dist/` 启动，运行期间请勿删除本项目目录。
+- `auth.json`: **private plaintext credentials**; never commit, share or attach them to reports. Unix uses private modes; Windows applies per-user/SYSTEM directory permissions.
+- `config.json`, `state.json`: per-account settings and runtime observations/pending outcomes.
+- `accounts.json`, `accounts/<hashed-id>/`: registry/sync and additional profiles. Existing default credentials stay in place.
+- `preferences.json`: global display language only. Invalid display preferences warn/fall back to English without blocking the safety Stop command or overwriting the bad file.
+- `application.json`, `session-*.json`, `*.lock`: application-exit coordination and local locks; do not edit them.
+- `worker.log`: backend diagnostics; daily results are in state/TUI. Startup truncates it above 1 MiB.
 
-## 验证与人工验收
+Do not delete state to troubleshoot duplicate requests: that loses pending markers. Do not point `--home` at Pi/Codex/old Rust directories. Keep the source build or release folder while its backend runs. Detailed design: [accounts](docs/MULTI_ACCOUNT.md), [configuration/scheduling](docs/CONFIG_AND_SCHEDULING.md).
+
+## Development and verification
 
 ```sh
 npm run check
 npm test
+npm run package        # native target; Windows needs VS C tools + SDK developer shell
+npm run check:package  # isolated executable, temporary home, no credentials or UI
+npm run archive
 ```
 
-自动检查仅覆盖非 UI 逻辑：时间规则、本地文件/进程互斥、模拟 OAuth/HTTP、单次发送、暂停、防重发和无头进程生命周期。**不运行 UI 自动化，不访问真实账号。** GitHub 工作流配置 Linux、macOS、Windows 检查；配置了矩阵不代表它已执行或通过。
+Tests use temporary homes, synthetic tokens and local mock HTTP only. No automated TUI/tray tests. The Linux/Windows workflow checks source, builds portable packages, verifies the headless executable and uploads allowlisted archives/checksums. Windows tray interaction, real multiple-account flows and long-running behavior still require manual acceptance; CI configuration is not proof of a passing run. See [verification](docs/VERIFICATION.md) and [plan](docs/PLAN.md).
 
-人工验收（进入登录、模型或设置仍会按既有规则暂停自动发送；若需保留当前启停状态，可先只重开面板、测试主页按键）：
+## License
 
-1. S → Enter 编辑 → Esc 返回设置 → Esc 返回主页，之后还能继续按键；Esc 无明显半秒停顿，方向键、F2、快速输入和粘贴不被误判。登录和模型选择的返回也正常。
-2. 各页面及等待中：一次 Ctrl+C 只提示，3 秒内第二次退出；中间按其他键/等待超时后重新计数。退出后终端能正常输入。
-3. 静置不闪屏；拖动终端宽度时快捷操作在右侧/下方切换，标题居中、圆角边框和中文对齐，长账号/模型不会撑破边框。缩小高度后仍能看到操作和事件入口；额度颜色和文字可辨认，`NO_COLOR=1` 时也能判断状态。
-4. D 打开日志，试滚轮/方向键/翻页键和 Home/End；向上查看时新事件不抢位置，回底部后继续跟随。Esc 返回不暂停调度。右下角提示无边框，3 秒消失后恢复日志，第一次 Ctrl+C 为红色；弹窗不挡住全局双次退出。
-5. 登录、模型选择和设置弹窗可操作与保存，编辑项 Esc 回设置、设置 Esc 放弃草稿；5 分钟内再次进入模型目录不再等待联网；后台状态更新及时反映到面板。I/F2 暂停、C 只读查询、关闭后后台继续、X 停止后台。真实启用前核对账号、模型和其他旧刷新任务。
-6. 用户确认新版验收后，再清理本地旧 Rust 参考目录。
-
-## 许可与来源
-
-[MIT](LICENSE)。本项目独立重写，OAuth/订阅请求格式与部分调度规则参考 MIT 项目 [codex-switch](https://github.com/xjoker/codex-switch) 及本项目旧 Rust 实现，保留对应版权声明，见 [NOTICE.md](NOTICE.md)。不包含旧上游的 Agent、模型提示词或兼容二进制。
-
-实现范围见 [docs/PLAN.md](docs/PLAN.md)，已验证/未验证事项见 [docs/VERIFICATION.md](docs/VERIFICATION.md)。
+[MIT](LICENSE). OAuth/usage formats and some scheduling rules reference [codex-switch](https://github.com/xjoker/codex-switch) and the previous Rust implementation; retained attribution is in [NOTICE.md](NOTICE.md). Portable packages also carry the matching Node runtime/third-party license in `LICENSE_NODE.txt`.

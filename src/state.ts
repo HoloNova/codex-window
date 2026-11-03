@@ -1,9 +1,11 @@
-import { chmodSync, closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { deviceTimezone, migrateTimezone, validateTimezone } from './timezones.js';
+import { english } from './i18n.js';
 
 export interface Settings {
   model: string;
@@ -27,7 +29,8 @@ export interface Usage {
 }
 export interface State {
   app: 'codex-window-node';
-  version: 1;
+  version: 1 | 2;
+  configKey: string;
   settings: Settings;
   enabled: boolean;
   stop: boolean;
@@ -46,13 +49,15 @@ export interface State {
     events: { at: number; text: string }[];
   };
 }
+export type RuntimeState = Omit<State, 'settings' | 'enabled' | 'configKey' | 'version'> & { version: 2 };
+export interface Configuration extends Settings { app: 'codex-window-config'; version: 1; enabled: boolean }
 export const now = (): number => Math.floor(Date.now() / 1000);
-export const defaults: Settings = { model: '', timezone: 'Asia/Shanghai', start: '04:30', end: '19:30', pollMinutes: 30 };
+export const defaults: Settings = { model: '', timezone: deviceTimezone, start: '04:30', end: '19:30', pollMinutes: 30 };
 export function initialState(): State {
   return {
-    app: 'codex-window-node', version: 1, settings: { ...defaults }, enabled: false, stop: false, generation: 0,
+    app: 'codex-window-node', version: 2, configKey: '', settings: { ...defaults }, enabled: false, stop: false, generation: 0,
     check: 0, checked: 0, hold: null,
-    status: { heartbeat: 0, nextPoll: null, nextRefresh: null, usage: null, stale: true, busy: '', reason: '请登录、选择模型，再手动启用', events: [] },
+    status: { heartbeat: 0, nextPoll: null, nextRefresh: null, usage: null, stale: true, busy: '', reason: english('请登录、选择模型，再手动启用'), events: [] },
   };
 }
 export function object(value: unknown): Record<string, unknown> {
@@ -70,8 +75,7 @@ export function integer(value: unknown, min = 0): number {
 export function validateSettings(value: unknown): Settings {
   const s = object(value);
   if (typeof s.model !== 'string' || !/^[a-zA-Z0-9._-]{0,128}$/.test(s.model)) throw new Error('模型 ID 无效');
-  const timezone = text(s.timezone);
-  new Intl.DateTimeFormat('en', { timeZone: timezone }).format();
+  const timezone = validateTimezone(text(s.timezone));
   for (const key of ['start', 'end']) {
     if (typeof s[key] !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(s[key])) throw new Error('时段必须使用 HH:MM');
   }
@@ -89,10 +93,9 @@ export function validateUsage(value: unknown): Usage {
   if (typeof u.allowed !== 'boolean' || typeof u.limited !== 'boolean') throw new Error('缺少额度限制状态');
   return { fetchedAt: integer(u.fetchedAt, 1), allowed: u.allowed, limited: u.limited, primary: validateWindow(u.primary), weekly: validateWindow(u.weekly) };
 }
-function validateState(value: unknown): State {
+function validateRuntime(value: unknown): RuntimeState {
   const s = object(value);
-  if (s.app !== 'codex-window-node' || s.version !== 1 || typeof s.enabled !== 'boolean' || typeof s.stop !== 'boolean') throw new Error('状态文件无效，已禁止发送');
-  validateSettings(s.settings);
+  if (s.app !== 'codex-window-node' || s.version !== 2 || 'settings' in s || 'enabled' in s || typeof s.stop !== 'boolean') throw new Error('状态文件无效，已禁止发送');
   for (const key of ['generation', 'check', 'checked']) integer(s[key]);
   if (s.hold !== null) { const h = object(s.hold); integer(h.at, 1); text(h.model); }
   const status = object(s.status);
@@ -102,9 +105,25 @@ function validateState(value: unknown): State {
   if (typeof status.stale !== 'boolean' || typeof status.busy !== 'string' || typeof status.reason !== 'string' || !Array.isArray(status.events)) throw new Error('观察状态无效');
   if (status.events.length > 10) throw new Error('事件数量无效');
   for (const event of status.events) { const e = object(event); integer(e.at, 1); text(e.text); }
-  return s as unknown as State;
+  return s as unknown as RuntimeState;
 }
-export function event(state: State, message: string): void {
+function runtimeOf(s: State | RuntimeState): RuntimeState {
+  return validateRuntime({ app: s.app, version: 2, stop: s.stop, generation: s.generation, check: s.check, checked: s.checked, hold: s.hold, status: { ...s.status, busy: english(s.status.busy), reason: english(s.status.reason) } });
+}
+function legacyState(value: unknown): State {
+  const s = object(value);
+  if (s.app !== 'codex-window-node' || s.version !== 1 || typeof s.enabled !== 'boolean') throw new Error('旧状态文件无效，不会迁移');
+  const oldSettings = object(s.settings);
+  const settings = validateSettings({ ...oldSettings, timezone: migrateTimezone(text(oldSettings.timezone)) });
+  const { settings: _settings, enabled: _enabled, ...rest } = s;
+  return { ...validateRuntime({ ...rest, version: 2 }), version: 1, settings, enabled: s.enabled, configKey: JSON.stringify([settings, s.enabled]) };
+}
+function configuration(s: Pick<State, 'settings' | 'enabled'>): Configuration {
+  if (typeof s.enabled !== 'boolean') throw new Error('自动发送开关必须为 true 或 false');
+  return { app: 'codex-window-config', version: 1, ...validateSettings(s.settings), enabled: s.enabled };
+}
+export function event(state: Pick<RuntimeState, 'status'>, message: string): void {
+  message = english(message);
   state.status.events.push({ at: now(), text: message });
   state.status.events = state.status.events.slice(-8);
   state.status.reason = message;
@@ -135,6 +154,10 @@ interface Owner { pid: number; token: string }
 function owner(path: string): Owner {
   const data = object(JSON.parse(readFileSync(path, 'utf8')));
   return { pid: integer(data.pid, 1), token: text(data.token) };
+}
+export function liveOwner(path: string): number | null {
+  try { const pid = owner(path).pid; return isAlive(pid) ? pid : null; }
+  catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e; }
 }
 // Publish a complete owner record with an exclusive hard link: no empty lock
 // can be mistaken for a dead process. A separate reaper serializes crash recovery.
@@ -174,17 +197,20 @@ export async function lock(path: string, timeoutMs = 30_000, signal?: AbortSigna
 export class Store {
   readonly home: string;
   readonly path: string;
+  readonly configPath: string;
+  private readonly snapshots = new WeakMap<State, { value: Configuration; key: string }>();
   constructor(home = process.env.CODEX_WINDOW_HOME || join(homedir(), '.codex-window-node')) {
     this.home = resolve(home);
     if (this.home === dirname(this.home) || this.home === resolve(homedir())) throw new Error('请指定专用数据子目录，不能使用磁盘根目录或用户主目录');
     mkdirSync(this.home, { recursive: true, mode: 0o700 });
     if (!lstatSync(this.home).isDirectory() || lstatSync(this.home).isSymbolicLink()) throw new Error('数据目录不能是符号链接');
     this.path = join(this.home, 'state.json');
+    this.configPath = join(this.home, 'config.json');
     const entries = readdirSync(this.home);
     if (entries.length && !entries.every(name => /^(state\.lock(\.reap|\.[0-9a-f-]+\.tmp)?|\.[0-9a-f-]+\.tmp)$/.test(name))) {
       try {
         if (lstatSync(this.path).isSymbolicLink()) throw new Error();
-        validateState(JSON.parse(readFileSync(this.path, 'utf8')));
+        this.stored();
       } catch { throw new Error('目录不是本工具的有效数据目录；请使用全新专用目录，不会读取其中的凭证'); }
     }
     if (process.platform === 'win32') {
@@ -193,19 +219,88 @@ export class Store {
       execFileSync('icacls', [this.home, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`, '*S-1-5-18:(OI)(CI)F'], { stdio: 'pipe', windowsHide: true });
     } else chmodSync(this.home, 0o700);
   }
-  async init(): Promise<void> {
-    const release = await lock(join(this.home, 'state.lock'));
-    try { if (!existsSync(this.path)) atomicJson(this.path, initialState()); else this.read(); }
-    finally { release(); }
+  private stored(): State | RuntimeState {
+    const value: unknown = JSON.parse(readFileSync(this.path, 'utf8'));
+    return object(value).version === 1 ? legacyState(value) : validateRuntime(value);
   }
-  read(): State { return validateState(JSON.parse(readFileSync(this.path, 'utf8'))); }
+  legacyFormat(): boolean { return this.stored().version === 1; }
+  async init(signal?: AbortSignal): Promise<void> {
+    const release = await lock(join(this.home, 'state.lock'), 30_000, signal);
+    try {
+      signal?.throwIfAborted();
+      if (!existsSync(this.path)) {
+        const initial = initialState();
+        atomicJson(this.path, runtimeOf(initial)); atomicJson(this.configPath, configuration(initial));
+      } else {
+        const state = this.stored();
+        if (state.version === 1) {
+          // A running old binary must keep seeing its own schema until the user
+          // explicitly stops it. The legacy write path is only for that stop.
+          if (this.running() || liveOwner(join(this.home, 'pool.lock')) !== null) return;
+          if (existsSync(this.configPath)) this.readConfiguration();
+          else atomicJson(this.configPath, configuration(state as State));
+          atomicJson(this.path, runtimeOf(state));
+        }
+      }
+    } finally { release(); }
+  }
+  private readConfiguration(): { value: Configuration; key: string } {
+    let raw: string, stamp: string;
+    try {
+      if (lstatSync(this.configPath).isSymbolicLink()) throw new Error();
+      const fd = openSync(this.configPath, 'r');
+      try {
+        raw = readFileSync(fd, 'utf8'); const stat = fstatSync(fd, { bigint: true });
+        stamp = `${stat.ino}:${stat.mtimeNs}:${stat.ctimeNs}`;
+      } finally { closeSync(fd); }
+    } catch { throw new Error('config.json 无法读取、缺失或为符号链接；不会重建配置'); }
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { throw new Error('config.json 不是有效 JSON，已禁止发送；请修正文件'); }
+    try {
+      const value = object(parsed);
+      if (value.app !== 'codex-window-config' || value.version !== 1 || typeof value.enabled !== 'boolean' || Object.keys(value).some(key => !['app', 'version', 'model', 'timezone', 'start', 'end', 'pollMinutes', 'enabled'].includes(key))) throw new Error('配置字段或版本无效');
+      return { value: configuration({ settings: validateSettings(value), enabled: value.enabled }), key: createHash('sha256').update(raw).update(stamp).digest('hex') };
+    } catch (e) { throw new Error(`config.json: ${e instanceof Error ? e.message : '配置无效'}；已禁止发送`); }
+  }
+  readRuntime(): RuntimeState { return runtimeOf(this.stored()); }
+  read(): State {
+    const runtime = this.stored();
+    if (runtime.version === 1) return runtime as State;
+    const snapshot = this.readConfiguration(), { app: _app, version: _version, enabled, ...settings } = snapshot.value;
+    const state: State = { ...runtime, settings, enabled, configKey: snapshot.key };
+    this.snapshots.set(state, snapshot); return state;
+  }
+  // Caller holds state.lock. Runtime-only writes never rewrite config.json.
+  write(state: State): void {
+    const runtime = runtimeOf(state);
+    if (state.version === 1) {
+      atomicJson(this.path, { ...runtime, version: 1, settings: state.settings, enabled: state.enabled }); return;
+    }
+    const snapshot = this.snapshots.get(state);
+    if (!snapshot) throw new Error('状态快照无效，请重新读取');
+    const next = configuration(state), changed = JSON.stringify(next) !== JSON.stringify(snapshot.value);
+    if (changed && this.readConfiguration().key !== snapshot.key) throw new Error('配置已被其他操作修改，请重新读取；不会覆盖手工配置');
+    // Disable first; enable last. A crash between files must never expose a
+    // fresh enabling configuration before its explicit review is durable.
+    if (changed && !next.enabled) atomicJson(this.configPath, next);
+    atomicJson(this.path, runtime);
+    if (changed && next.enabled) {
+      if (this.readConfiguration().key !== snapshot.key) throw new Error('配置已在启用前修改，未覆盖；请重新读取后复核启用');
+      atomicJson(this.configPath, next);
+    }
+  }
   async update(change: (state: State) => void): Promise<State> {
     const release = await lock(join(this.home, 'state.lock'));
-    try { const state = this.read(); change(state); validateState(state); atomicJson(this.path, state); return state; }
+    try { const state = this.read(); change(state); this.write(state); return state; }
     finally { release(); }
   }
-  running(): boolean {
-    try { return isAlive(owner(join(this.home, 'worker.lock')).pid); }
-    catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return false; throw e; }
+  async updateRuntime(change: (state: RuntimeState) => void): Promise<void> {
+    const release = await lock(join(this.home, 'state.lock'));
+    try {
+      const old = this.stored(), runtime = runtimeOf(old); change(runtime); validateRuntime(runtime);
+      if (old.version === 1) atomicJson(this.path, { ...runtime, version: 1, settings: (old as State).settings, enabled: (old as State).enabled });
+      else atomicJson(this.path, runtime);
+    } finally { release(); }
   }
+  running(): boolean { return liveOwner(join(this.home, 'worker.lock')) !== null; }
 }

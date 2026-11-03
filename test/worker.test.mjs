@@ -28,7 +28,7 @@ test('one idle cycle sends exactly once and distinguishes completion from activa
   assert.equal(f.calls.filter(c => c.path.startsWith('/models')).length, 0);
   assert.equal(f.store.read().hold, null);
   const events = f.store.read().status.events.map(e => e.text).join('\n');
-  assert.match(events, /请求响应已完成/); assert.match(events, /已观察到活动窗口/);
+  assert.match(events, /Request response completed/); assert.match(events, /An active window was observed/);
 });
 test('uncertain send hold survives restart and checks; only explicit review can retry', async t => {
   const f = await fixture(t, (call, response) => {

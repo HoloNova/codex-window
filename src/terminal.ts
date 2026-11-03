@@ -1,6 +1,7 @@
 import { writeSync } from 'node:fs';
 import type { Key } from 'node:readline';
 import { Keyboard } from './keyboard.js';
+import { translate } from './i18n.js';
 
 export type Tone = 'normal' | 'muted' | 'accent' | 'good' | 'wait' | 'warning' | 'bad';
 const codes: Record<Tone, number> = { normal: 39, muted: 90, accent: 36, good: 32, wait: 36, warning: 33, bad: 31 };
@@ -77,7 +78,7 @@ export function wrap(value: string, width: number): string[] {
 }
 export function quota(remaining: number): string {
   const value = Math.max(0, Math.min(100, remaining));
-  const label = value === 0 ? '耗尽' : value <= 10 ? '偏低' : value <= 30 ? '留意' : '充足';
+  const label = translate(value === 0 ? '耗尽' : value <= 10 ? '偏低' : value <= 30 ? '留意' : '充足');
   const text = `${value > 0 && value < 0.1 ? '<0.1' : Number(value.toFixed(1))}% [${label}]`;
   if (depth < 8) return paint(text, value <= 10 ? 'bad' : value <= 30 ? 'warning' : 'good');
   // Green → amber → red follows REMAINING allowance, never the used amount.

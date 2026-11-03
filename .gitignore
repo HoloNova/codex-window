@@ -7,4 +7,14 @@ coverage/
 .codex-window-node/
 auth.json
 state.json
+config.json
+accounts.json
+pool.lock
+accounts.lock
 *.lock.tmp
+
+.artifacts/
+preferences.json
+application.json
+application.lock
+session-*.json

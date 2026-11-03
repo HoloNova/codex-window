@@ -127,7 +127,7 @@ test('headless CLI starts one worker, checks read-only, and stops without touchi
   assert(status.running); assert.equal(status.enabled, false);
   await call('check');
   await until(() => { const s = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')); return s.checked === s.check; });
-  await assert.rejects(call('resume'), /请先完成登录/);
+  await assert.rejects(call('resume'), /Sign in first/);
   assert.equal(existsSync(join(home, 'auth.json')), false);
   await call('stop'); await until(() => !existsSync(join(home, 'worker.lock')));
   assert.equal(JSON.parse((await call('status')).stdout).running, false);

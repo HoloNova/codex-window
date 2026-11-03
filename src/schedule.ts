@@ -1,7 +1,8 @@
 import type { Settings, Usage, WindowUsage } from './state.js';
+import { clock } from './timezones.js';
 
 function localTime(timestamp: number, timezone: string): { hour: number; minute: number; second: number } {
-  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(timestamp * 1000);
+  const parts = clock(timezone).formatToParts(timestamp * 1000);
   const get = (key: string): number => Number(parts.find(p => p.type === key)?.value);
   return { hour: get('hour'), minute: get('minute'), second: get('second') };
 }
