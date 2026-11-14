@@ -4,6 +4,7 @@ import { readFileSync, existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { Auth, authorizationUrl, credentials, deviceAction } from '../dist/auth.js';
 import { Api, verifyCompletion } from '../dist/api.js';
+import { currentVersion } from '../dist/runtime.js';
 import { now, tryLock } from '../dist/state.js';
 import { models as accountModels } from '../dist/actions.js';
 import { fixture, wireUsage, tokenReply, json, completed } from './helpers.mjs';
@@ -90,6 +91,7 @@ test('one hello uses selected model, no tools/store, and no retry after incomple
   assert.equal(f.calls.length, 1);
   const call = f.calls[0], body = JSON.parse(call.body);
   assert.equal(call.path, '/responses'); assert.equal(call.headers['chatgpt-account-id'], 'test-account');
+  assert.equal(call.headers['user-agent'], `codex-window/${currentVersion()}`);
   assert.equal(body.model, 'chosen-model'); assert.equal(body.store, false); assert.deepEqual(body.tools, []);
   assert.equal(body.input[0].content[0].text, 'hello'); assert.equal(body.reasoning.effort, 'low');
 });

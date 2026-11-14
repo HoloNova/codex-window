@@ -16,14 +16,9 @@ export function allows(settings: Settings, timestamp: number): boolean {
   return start < end ? seconds >= start && seconds <= end : seconds >= start || seconds <= end;
 }
 export function nextPoll(settings: Settings, after: number): number {
-  const first = Math.floor(after / 60) * 60 + 60;
-  // Walk real minutes, not constructed wall-clock dates, so DST gaps/repeats
-  // and half-hour/quarter-hour zones follow their real local clock slots.
-  for (let at = first; at < first + 48 * 3600; at += 60) {
-    const local = localTime(at, settings.timezone);
-    if ((local.hour * 60 + local.minute) % settings.pollMinutes === 0) return at;
-  }
-  throw new Error('无法计算下次查询时间');
+  // The interval starts when the previous attempt finishes, not at a
+  // wall-clock slot. Startup and manual checks therefore move the cadence.
+  return after + settings.pollMinutes * 60;
 }
 export const idle = (window: WindowUsage): boolean => window.used === 0 && window.remaining >= window.duration;
 export const active = (usage: Usage, at: number): boolean => observationProblem(usage, at) === null && !idle(usage.primary) && usage.primary.resetAt > at;

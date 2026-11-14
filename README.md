@@ -25,7 +25,7 @@ No packages for macOS, ARM or Alpine/musl. Windows binaries are unsigned and may
 ## Get started
 
 1. Press **L** to sign in. Device-code sign-in copies the code to the system clipboard when a clipboard tool is available; the code stays visible and selectable, with a bottom-right confirmation. If copying is unavailable, the panel says so and leaves the code for manual selection.
-2. Press **M** to select a model and **S** to set the time zone, operating hours and check interval.
+2. Press **M** to select a model and **S** to set the time zone, operating hours and check interval. The interval starts when the previous check finishes, so checks are not aligned to clock slots.
 3. Press **R** to enable the current account.
 
 English is the default. Choose **S → Interface language → 简体中文** to switch to Chinese without affecting account operation.
@@ -36,7 +36,7 @@ Press **A** to add or switch accounts. Accounts run independently; new accounts 
 
 Click a menu item to select it, then press Enter to edit or confirm. In settings, ↑↓ wraps between the first and last items; Home/End jumps to either end.
 
-Reopening the panel shows cached usage and the last successful check time; it does not add a query or reset a healthy backend's schedule. **Next action** distinguishes scheduled usage checks from planned openings, including an earlier check when one is due before an opening. Near reset, the backend checks again 90 seconds after reset and opens a window only if eligible. **D** shows automatic checks, opening plans and execution outcomes; uncertain sends are not retried.
+Reopening the panel shows cached usage and the last successful check time; it does not add a query or reset a healthy backend's schedule. **Next action** distinguishes scheduled usage checks from planned openings, including an earlier check when one is due before an opening. A successful manual read-only check keeps a future planned opening, but never restores a plan whose time has already passed. While the backend is still arranging its first check, the panel says so rather than showing an invented schedule. Near reset, the backend checks again 90 seconds after reset and opens a window only if eligible. **D** shows automatic checks, opening plans and execution outcomes; uncertain sends are not retried.
 
 When the panel starts, it makes one read-only request to the public GitHub Releases API. If a newer release exists, the title changes to **Codex Window Autorefresh · New version [Press U for releases]**. Press **U** on the home or log screen to open the Releases page in your browser. This only opens the page: it does not download, replace or run anything, and a failed check stays silent.
 

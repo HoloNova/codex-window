@@ -59,7 +59,19 @@ export class Worker {
         s.status.usage = usage; s.status.stale = false;
         if (active(usage, now())) s.hold = null;
       });
-      if (checkOnly) { await this.store.update(s => { event(s, '只读查询完成'); }); return; }
+      if (checkOnly) {
+        await this.store.update(s => {
+          // A read-only check changes usage, not the opening decision. Keep a
+          // future plan, but never restore a plan that is already due: that
+          // would turn a manual read into an automatic send on the next loop.
+          const previous = before.status.nextRefresh;
+          const retain = previous !== null && previous > now() && s.status.nextRefresh === null &&
+            s.enabled && !s.stop && !s.hold && !this.stopping && this.allowed() &&
+            s.generation === before.generation && schedulingKey(s) === schedulingKey(before);
+          if (retain) s.status.nextRefresh = previous;
+          event(s, retain ? '只读查询完成，保留开窗计划' : '只读查询完成');
+        }); return;
+      }
       const current = this.store.read();
       if (current.generation !== before.generation || current.configKey !== before.configKey) {
         await this.store.update(recordControlChange); return;

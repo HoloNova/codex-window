@@ -220,7 +220,8 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
         if (Number.isFinite(opening)) nextText += ` / ${openingText()}`;
       }
       nextTone = readOnly ? 'muted' : 'wait';
-    } else nextText = tr('尚未安排');
+    } else if (status.reason && reasonTone(status.reason) === 'bad') { nextText = tr(status.reason); nextTone = 'bad'; }
+    else nextText = tr('正在安排下次查询');
     lines.push(paint('状态  ', 'muted') + paint(statusText, tone),
       paint('下次动作  ', 'muted') + color(nextText, nextTone),
       paint(`时段  ${s.start === s.end ? tr('全天') : `${s.start}–${s.end}`}`, 'muted'),

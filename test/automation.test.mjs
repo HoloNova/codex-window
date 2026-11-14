@@ -63,6 +63,43 @@ test('warm startup and metadata-only configuration changes preserve requests, ca
   } finally { pool.shutdown(); await running; }
 });
 
+test('manual read-only checks preserve future opening plans but drop due plans without sending', async t => {
+  const f = await fixture(t, (_call, response) => json(response, wireUsage({ idle: false, remaining: 60 })));
+  await resume(f.store, f.auth);
+  const worker = new Worker(f.store, f.api);
+  await worker.cycle();
+  const plan = f.store.read().status.nextRefresh;
+  assert(plan && plan > now());
+  await worker.cycle(true);
+  assert.equal(f.store.read().status.nextRefresh, plan);
+  assert.match(events(f.store), /opening plan retained/);
+  await f.store.updateRuntime(s => { s.status.nextRefresh = now() - 1; });
+  await worker.cycle(true);
+  assert.equal(f.store.read().status.nextRefresh, null);
+  assert.equal(f.calls.filter(call => call.method === 'POST').length, 0);
+  assert.equal(f.calls.length, 3);
+});
+
+test('manual checks evaluate plan freshness at completion, not at start', async t => {
+  let clock = Date.now();
+  t.mock.method(Date, 'now', () => clock);
+  let arrived, reply;
+  const entered = new Promise(resolve => { arrived = resolve; });
+  const gate = new Promise(resolve => { reply = resolve; });
+  const f = await fixture(t, async (_call, response) => { arrived(); await gate; json(response, wireUsage({ idle: false, remaining: 60 })); });
+  await resume(f.store, f.auth);
+  await f.store.updateRuntime(s => { s.status.nextRefresh = now() + 60; });
+  const worker = new Worker(f.store, f.api);
+  const checking = worker.cycle(true);
+  await entered;
+  clock += 120_000; // The plan was future at the start and is due at completion.
+  reply();
+  await checking;
+  assert.equal(f.store.read().status.nextRefresh, null);
+  assert.equal(f.calls.filter(call => call.method === 'POST').length, 0);
+  assert.equal(f.calls.length, 1);
+});
+
 test('a metadata change during a due check cannot cause an immediate extra query or authorize sending', async t => {
   let arrived, reply;
   const entered = new Promise(resolve => { arrived = resolve; });

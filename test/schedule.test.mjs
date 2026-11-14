@@ -57,10 +57,11 @@ test('allowed band includes its boundary, supports overnight and explicit all-da
   const resetting = parseUsage(wireUsage({ idle: false, remaining: 1800, at: evening }), evening);
   assert.equal(decide(defaults, resetting, evening).kind, 'wait');
 });
-test('polls use local clock slots including quarter-hour offsets and DST', () => {
-  assert.equal(nextPoll({ ...settings, timezone: 'Asia/Kathmandu' }, ts('2026-11-02T00:01:00Z')), ts('2026-11-02T00:15:00Z'));
-  assert.equal(nextPoll({ ...settings, timezone: 'America/New_York' }, ts('2026-03-08T06:59:59Z')), ts('2026-03-08T07:00:00Z'));
-  assert.equal(nextPoll({ ...settings, timezone: 'America/New_York' }, ts('2026-11-01T05:59:59Z')), ts('2026-11-01T06:00:00Z'));
+test('polls run one interval after the previous attempt rather than on local clock slots', () => {
+  const start = ts('2026-11-02T00:01:00Z');
+  assert.equal(nextPoll({ ...settings, timezone: 'Asia/Kathmandu', pollMinutes: 30 }, start), start + 30 * 60);
+  assert.equal(nextPoll({ ...settings, timezone: 'America/New_York', pollMinutes: 30 }, start + 1), start + 1 + 30 * 60);
+  assert.equal(nextPoll({ ...settings, pollMinutes: 1440 }, start), start + 1440 * 60);
 });
 test('settings reject invalid timezone, model, time and conflicting cadence', () => {
   for (const patch of [{ timezone: 'No/Such_Zone' }, { model: '../bad' }, { start: '24:00' }, { end: '4:30' }, { pollMinutes: 7 }, { pollMinutes: 0 }]) assert.throws(() => validateSettings({ ...settings, ...patch }));

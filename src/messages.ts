@@ -105,7 +105,7 @@ export const messages: Record<string, string> = {
   '下次动作': 'Next action', '仅查询额度': 'Read-only usage check', '检查额度，符合条件时开窗': 'Check usage; open only if eligible',
   '定时查询额度': 'Scheduled usage check', '手动只读查询额度': 'Manual read-only usage check',
   '计划开窗（条件满足时执行）': 'Planned opening (if eligible)',
-  '等待执行': 'Waiting to run', '尚未安排': 'Not scheduled', '处理中，完成后更新计划': 'Working; schedule updates afterward',
+  '等待执行': 'Waiting to run', '尚未安排': 'Not scheduled', '正在安排下次查询': 'Scheduling the next check', '处理中，完成后更新计划': 'Working; schedule updates afterward',
   '登录账号': 'Sign in', '登录': 'Login', '选择模型': 'Select model', '修改设置': 'Settings', '设置': 'Settings',
   '只读查询': 'Read-only check', '查询': 'Check', '暂停当前账号': 'Pause account', '暂停': 'Pause', '启用当前账号': 'Enable account', '启用': 'Enable',
   '停止整个后台': 'Stop backend', '停止全部': 'Stop all', '连按两次退出': 'Press twice to close', '退出': 'Close',
@@ -170,6 +170,7 @@ export const messages: Record<string, string> = {
   // Concise operational messages. Older entries above/below remain readable in saved history.
   '自动查询额度': 'Automatic usage check', '手动查询额度': 'Manual usage check',
   '开窗前检查额度': 'Checking usage before opening', '只读查询完成': 'Read-only check complete',
+  '只读查询完成，保留开窗计划': 'Read-only check complete; opening plan retained',
   '查询完成，自动开窗已暂停': 'Usage checked; automatic opening paused',
   '开窗结果待确认，不自动重试': 'Opening pending confirmation; no automatic retry',
   '本次不开窗：{0}': 'Opening skipped: {0}', '计划开窗：{0}': 'Opening scheduled: {0}',

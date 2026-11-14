@@ -65,6 +65,8 @@ test('concise operation messages preserve pending outcomes and translate nested 
     ['设备码已复制到剪切板', 'Device code copied to clipboard'],
     ['无法复制设备码，请手动选择复制', 'Could not copy the device code; select and copy it manually'],
     ['Esc 取消等待 · ↑↓/PgUp/PgDn 翻阅', 'Esc Cancel wait · ↑↓/PgUp/PgDn Scroll'],
+    ['正在安排下次查询', 'Scheduling the next check'],
+    ['只读查询完成，保留开窗计划', 'Read-only check complete; opening plan retained'],
   ];
   for (const [zh, en] of pairs) {
     assert.equal(english(zh), en);

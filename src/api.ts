@@ -2,6 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { Auth } from './auth.js';
 import type { Credentials } from './auth.js';
 import { HttpError, NetworkError, jsonPost, parseJson } from './http.js';
+import { currentVersion } from './runtime.js';
 import { now, object, text, validateWindow } from './state.js';
 import type { Usage, WindowUsage } from './state.js';
 
@@ -53,7 +54,7 @@ export class Api {
     return cached.models.map(model => ({ ...model }));
   }
   private headers(auth: Credentials): Record<string, string> {
-    return { authorization: `Bearer ${auth.accessToken}`, 'chatgpt-account-id': auth.accountId, 'user-agent': 'codex-window/0.1.0' };
+    return { authorization: `Bearer ${auth.accessToken}`, 'chatgpt-account-id': auth.accountId, 'user-agent': `codex-window/${currentVersion()}` };
   }
   private async get(url: string, operation: string, signal?: AbortSignal, permitted: () => boolean = () => true): Promise<unknown> {
     const check = (): void => { signal?.throwIfAborted(); if (!this.executionAllowed() || !permitted()) throw new Error('账号操作已停止'); };
