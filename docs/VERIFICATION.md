@@ -1,6 +1,6 @@
 # 验证记录
 
-## 0.1.1 准备（本轮，未提交）
+## 0.1.1 正式版（v0.1.1）
 
 - 查询间隔改为从每次查询完成时起算：`nextPoll(settings, after) = after + pollMinutes*60`。启动和手动查询都会重新计算间隔，不再按本地整点对齐；开窗前的“重置后 90 秒”检查保持不变。
 - 手动 C 成功时只更新额度：未来开窗计划保留，已到期的计划不恢复，避免只读查询触发随后的自动发送。新增非 UI 回归覆盖两种计划状态。
@@ -8,7 +8,7 @@
 - 查询间隔仍保留原来的 5–1440 分钟且能整除一天限制；只改变计时基准。
 - 版本号同步为 0.1.1；API 请求的 User-Agent 改为读取当前版本，不涉及认证或凭证，也不需要重新登录。
 - `npm run check`、`npm run build`、`npm test` 和 `git diff --check` 通过；本地共 139 项非 UI 测试。没有编写或运行 UI 自动化，没有操作真实账户、真实发布或现有服务。
-- Linux `npm run package`、`npm run check:package`、`npm run release:files` 已通过；单文件 `--version` 显示 0.1.1，校验和校验通过。本机不构建 Windows；正式 CI、两平台下载文件、tag 和 Release 尚未执行。
+- Linux `npm run package`、`npm run check:package`、`npm run release:files` 已通过；单文件 `--version` 显示 0.1.1，校验和校验通过。源码已提交并推送，两平台 CI 通过；正式发行物从同一提交构建。Windows 实机托盘行为仍需手动验收。
 
 人工验收（待执行）：
 
