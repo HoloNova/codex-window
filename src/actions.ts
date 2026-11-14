@@ -5,7 +5,7 @@ import type { Auth } from './auth.js';
 import type { Api, Model } from './api.js';
 
 export async function interrupt(store: Store): Promise<void> {
-  await store.update(s => { pause(s); event(s, '自动发送已暂停；只读查询继续'); });
+  await store.update(s => { pause(s); event(s, '自动开窗已暂停，继续查询额度'); });
 }
 export function applySettings(state: State, settings: Settings): void {
   pause(state); state.settings = settings; state.status.nextPoll = now(); state.status.stale = true;
@@ -33,15 +33,15 @@ export async function resume(store: Store, auth: Auth, signal?: AbortSignal, gen
       if (!s.settings.model) throw new Error('请先选择模型');
       s.enabled = true; s.stop = false; s.generation++; s.hold = null; s.checked = s.check;
       s.status.nextPoll = now(); s.status.nextRefresh = null; s.status.stale = true;
-      event(s, '已启用并复核先前待确认请求；先查询真实额度再决定是否发送');
+      event(s, '已启用，开始查询额度');
     });
   } finally { release(); }
 }
 export async function check(store: Store): Promise<void> {
-  await store.update(s => { s.check++; event(s, '已请求只读查询，不会发送或新建开窗任务'); });
+  await store.update(s => { s.check++; event(s, '已请求只读查询'); });
 }
 export async function stop(store: Store): Promise<void> {
-  try { await store.update(s => { pause(s); s.stop = true; event(s, '正在停止后台，等待已开始的请求和凭证保存完成'); }); }
+  try { await store.update(s => { pause(s); s.stop = true; event(s, '正在停止后台…'); }); }
   catch {
     // Broken/manual configuration must never prevent a Stop or be overwritten
     // with guessed defaults. The persisted stop remains until explicit review

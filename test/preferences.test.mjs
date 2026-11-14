@@ -50,6 +50,29 @@ test('catalog preserves parameters, placeholders, whitespace and unknown externa
   assert.equal(translate('external-model_ID-未知', 'en'), 'external-model_ID-未知');
   assert.equal(english('config.json: 时段必须使用 HH:MM；已禁止发送'), 'config.json: Hours must use HH:MM; sending is blocked');
 });
+test('concise operation messages preserve pending outcomes and translate nested failures', t => {
+  temporary(t);
+  const pairs = [
+    ['执行开窗指令', 'Executing opening command'],
+    ['开窗指令已完成，正在确认结果', 'Opening command completed; confirming result'],
+    ['已确认开窗', 'Window opening confirmed'],
+    ['开窗尚未确认，不自动重试', 'Opening not confirmed; no automatic retry'],
+    ['开窗结果待确认，不自动重试', 'Opening pending confirmation; no automatic retry'],
+    ['开窗指令失败（HTTP 503）；不自动重试，正在确认结果', 'Opening command failed (HTTP 503); no automatic retry; confirming result'],
+    ['查询额度网络失败或超时；开窗未确认，不自动重试', 'Query usage: network failure or timeout; opening not confirmed; no automatic retry'],
+    ['计划开窗：14/11/2026, 14:26:30 (Asia/Shanghai)', 'Opening scheduled: 14/11/2026, 14:26:30 (Asia/Shanghai)'],
+    ['凭证已失效，请重新查询', 'Credentials expired; check again'],
+  ];
+  for (const [zh, en] of pairs) {
+    assert.equal(english(zh), en);
+    assert.equal(translate(en, 'zh-CN'), zh);
+    assert.doesNotMatch(en, /hello|pending marker|in-flight|model-specific/i);
+  }
+  const failure = '无法打开浏览器，请访问 https://github.com/HoloNova/codex-window/releases';
+  assert.equal(english(failure), 'Could not open a browser; visit https://github.com/HoloNova/codex-window/releases');
+  assert.equal(translate(english(failure), 'zh-CN'), failure);
+});
+
 test('new events use canonical English and existing history is not rewritten by language changes', async t => {
   const home = temporary(t), store = new Store(home); await store.init();
   await store.update(s => { s.status.events.push({ at: now(), text: '已有中文历史记录' }); event(s, '已观察到活动窗口'); });

@@ -37,7 +37,7 @@ export function verifyCompletion(body: string): void {
       completed = true;
     }
   }
-  if (!completed) throw new Error('请求未确认完成，禁止自动重发');
+  if (!completed) throw new Error('请求未确认完成');
 }
 export interface Model { id: string; name: string }
 export class Api {
@@ -109,11 +109,11 @@ export class Api {
       tools: [], tool_choice: 'auto', parallel_tool_calls: false, stream: true, store: false,
       reasoning: { effort: 'low' }, include: [],
     });
-    const response = await this.auth.http.request('发送 hello', this.auth.http.urls.responses, {
+    const response = await this.auth.http.request('开窗指令', this.auth.http.urls.responses, {
       ...request, headers: { ...this.headers(credential), 'content-type': 'application/json' },
     });
     if (response.status === 401 || response.status === 403) this.auth.block();
-    if (response.status < 200 || response.status >= 300) throw new HttpError(response.status, '发送 hello');
+    if (response.status < 200 || response.status >= 300) throw new HttpError(response.status, '开窗指令');
     verifyCompletion(response.body);
   }
 }

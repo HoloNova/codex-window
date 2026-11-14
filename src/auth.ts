@@ -2,11 +2,11 @@ import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { atomicJson, integer, now, object, text } from './state.js';
 import type { Store } from './state.js';
 import { Http, HttpError, jsonPost, parseJson } from './http.js';
+import { openExternal } from './runtime.js';
 import { translate } from './i18n.js';
 
 const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
@@ -186,10 +186,7 @@ export class Auth {
           resolve(code);
         });
         announce(`请在浏览器完成登录：\n${url.href}`);
-        const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'rundll32' : 'xdg-open';
-        const args = process.platform === 'win32' ? ['url.dll,FileProtocolHandler', url.href] : [url.href];
-        const child = spawn(command, args, { stdio: 'ignore', detached: true, windowsHide: true });
-        child.on('error', () => {}); child.unref();
+        void openExternal(url.href);
         if (cancelled.aborted) aborted();
       });
       await accept(await this.exchange(code, verifier, redirect));

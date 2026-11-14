@@ -93,6 +93,17 @@ test('one hello uses selected model, no tools/store, and no retry after incomple
   assert.equal(body.model, 'chosen-model'); assert.equal(body.store, false); assert.deepEqual(body.tools, []);
   assert.equal(body.input[0].content[0].text, 'hello'); assert.equal(body.reasoning.effort, 'low');
 });
+test('opening failures use the product action name without exposing request text or response bodies', async t => {
+  const f = await fixture(t, (_call, response) => response.writeHead(503).end('private-test-response'));
+  await assert.rejects(f.api.sendHello(f.auth.load(), 'chosen-model'), error => {
+    assert.equal(error.message, '开窗指令失败（HTTP 503）');
+    assert.doesNotMatch(error.message, /hello|private-test-response/);
+    return true;
+  });
+  assert.equal(f.calls.length, 1, 'an opening failure must not trigger a retry');
+  assert.equal(JSON.parse(f.calls[0].body).input[0].content[0].text, 'hello');
+});
+
 test('SSE success requires a complete matching completion event', () => {
   verifyCompletion(completed); verifyCompletion(completed.replaceAll('\n', '\r\n'));
   for (const body of [completed.trimEnd(), 'data: {}\n\n', 'data: {"type":"response.failed"}\n\n', completed.replace('"status":"completed"', '"status":"failed"'), completed.replace('event: response.completed', 'event: response.created'), 'data: {\n\n']) assert.throws(() => verifyCompletion(body));

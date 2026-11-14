@@ -176,12 +176,14 @@ test('the last pre-send gate reads configuration even after the pending marker w
   const f = await fixture(t, (_call, response) => json(response, wireUsage()));
   await resume(f.store, f.auth);
   const update = f.store.update.bind(f.store);
+  let changed = false;
   t.mock.method(f.store, 'update', async change => {
     const state = await update(change);
-    if (state.status.busy.startsWith('发送 hello')) editConfig(f.store, { enabled: false });
+    if (state.hold && !changed) { changed = true; editConfig(f.store, { enabled: false }); }
     return state;
   });
   await new Worker(f.store, f.api).cycle();
+  assert.equal(changed, true, 'pause must be injected after the pending outcome is saved');
   assert(f.calls.every(call => call.method === 'GET')); assert.equal(f.store.read().enabled, false);
 });
 test('Stop survives bad configuration and a repaired enabled=true cannot silently undo it on restart', async t => {

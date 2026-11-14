@@ -37,6 +37,7 @@ Click menu items to select, then Enter to edit/confirm. Settings arrows wrap at
 either end; Home/End jumps to the first/last item. Text selection/copying uses
 your terminal's modifier (often Shift+drag).
 Next action shows a local check plan, not a guaranteed send time.
+The panel checks GitHub Releases once per launch. If a newer release exists, the title shows New version; press U on the home/log screen to open the releases page. It never downloads or installs an update, and failed checks stay silent.
 Language changes do not pause accounts or synchronize account settings. Business
 setting changes pause affected accounts and need explicit R to enable again.
 Esc returns one step. Ctrl+C twice closes only the panel. D opens session logs.

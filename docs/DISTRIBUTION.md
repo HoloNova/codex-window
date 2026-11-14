@@ -3,7 +3,7 @@
 ## Approved targets and boundaries
 
 - Windows x64 desktop and Linux x64/glibc. No official macOS, ARM or Alpine/musl binaries.
-- One directly downloadable executable per platform, no manual extraction, installer, administrator prompt, global command replacement, service deployment, auto-update or automatic startup.
+- One directly downloadable executable per platform, no manual extraction, installer, administrator prompt, global command replacement, service deployment, auto-update or automatic startup. The TUI may perform one read-only GitHub release check per launch and open the releases page on demand; it never downloads or installs an update.
 - Runtime JavaScript uses Node built-ins only. `esbuild` and Node's documented `postject` injector are **build-only** development dependencies, not runtime services.
 - [Node 24 SEA](https://nodejs.org/docs/latest-v24.x/api/single-executable-applications.html) embeds one bundled CommonJS script in a copy of the matching Node executable. Source remains ESM. Snapshots/code cache are disabled: device time zone and user files are evaluated on the user's machine, not at build time.
 - CI builds each binary on its own OS. This is not cross-compilation and not a rewrite into native machine code; Node's baseline memory remains.

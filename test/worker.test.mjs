@@ -28,7 +28,8 @@ test('one idle cycle sends exactly once and distinguishes completion from activa
   assert.equal(f.calls.filter(c => c.path.startsWith('/models')).length, 0);
   assert.equal(f.store.read().hold, null);
   const events = f.store.read().status.events.map(e => e.text).join('\n');
-  assert.match(events, /Request response completed/); assert.match(events, /An active window was observed/);
+  assert.match(events, /Opening command completed; confirming result/); assert.match(events, /Window opening confirmed/);
+  assert.doesNotMatch(events, /hello|pending marker|model-specific|in-flight/i);
 });
 test('uncertain send hold survives restart and checks; only explicit review can retry', async t => {
   const f = await fixture(t, (call, response) => {

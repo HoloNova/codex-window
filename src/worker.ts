@@ -6,7 +6,7 @@ import { applicationCommand } from './runtime.js';
 import { ApplicationSession, applicationControl, hasRegisteredWorker, prepareApplication } from './application.js';
 import { translate } from './i18n.js';
 import { event, lock, now, tryLock } from './state.js';
-import type { Store } from './state.js';
+import type { State, Store } from './state.js';
 import { active, allows, decide, nextPoll } from './schedule.js';
 import { Auth } from './auth.js';
 import { Api } from './api.js';
@@ -14,6 +14,12 @@ import { stop } from './actions.js';
 import { Accounts } from './accounts.js';
 import { Wakeup } from './wakeup.js';
 
+// File identity/metadata still guards sending via configKey. Only business
+// changes may reschedule work: reopening a panel can reapply Windows ACLs.
+function schedulingKey(state: State): string {
+  const { model, timezone, start, end, pollMinutes } = state.settings;
+  return JSON.stringify([model, timezone, start, end, pollMinutes, state.enabled]);
+}
 export const errorMessage = (error: unknown): string => translate(error instanceof Error ? error.message : '操作失败');
 export class Worker {
   private stopping = false;
@@ -28,7 +34,22 @@ export class Worker {
     if (before.stop) return;
     this.readAbort = new AbortController();
     const settings = before.settings;
-    await this.store.update(s => { s.status.nextRefresh = null; s.status.stale = true; s.status.busy = '查询额度'; });
+    const planned = !checkOnly && before.enabled && !before.hold && !!settings.model && before.status.nextRefresh !== null && before.status.nextRefresh <= now();
+    const recordControlChange = (s: State): void => {
+      const previous = before.status.nextRefresh;
+      // Preserve an existing future decision, never retry the due send whose
+      // authorization was invalidated. That decision will fetch fresh usage.
+      const retain = !planned && before.enabled && !before.hold && !!settings.model && previous !== null &&
+        !this.stopping && this.allowed() && s.enabled && !s.stop && !s.hold &&
+        s.generation === before.generation && schedulingKey(s) === schedulingKey(before) &&
+        (s.status.nextRefresh === null || s.status.nextRefresh === previous);
+      if (retain) s.status.nextRefresh = previous;
+      event(s, retain ? '配置已变动，保留开窗计划' : '状态已变更，本次不开窗');
+    };
+    await this.store.update(s => {
+      s.status.nextRefresh = null; s.status.stale = true; s.status.busy = '查询额度';
+      event(s, checkOnly ? '手动查询额度' : planned ? '开窗前检查额度' : '自动查询额度');
+    });
     let release: (() => void) | null = null;
     try {
       release = await lock(join(this.store.home, 'account.lock'), 120_000, this.readAbort.signal);
@@ -38,60 +59,76 @@ export class Worker {
         s.status.usage = usage; s.status.stale = false;
         if (active(usage, now())) s.hold = null;
       });
-      if (checkOnly) { await this.store.update(s => { event(s, '只读查询完成，未发送或新建开窗任务'); }); return; }
+      if (checkOnly) { await this.store.update(s => { event(s, '只读查询完成'); }); return; }
       const current = this.store.read();
-      if (current.generation !== before.generation || current.configKey !== before.configKey || !current.enabled || current.stop || this.stopping || !this.allowed()) {
-        await this.store.update(s => { s.status.reason = '自动发送已暂停，保留只读额度结果'; }); return;
+      if (current.generation !== before.generation || current.configKey !== before.configKey) {
+        await this.store.update(recordControlChange); return;
       }
-      if (current.hold) { await this.store.update(s => { s.status.reason = '上次发送仍待确认；观察到活动窗口或手动复核启用前不再发送'; }); return; }
-      if (!settings.model) { await this.store.update(s => { s.status.reason = '请先选择模型'; }); return; }
-      if (decision.kind === 'wait') { await this.store.update(s => { s.status.reason = decision.reason; }); return; }
+      if (!current.enabled || current.stop || this.stopping || !this.allowed()) {
+        await this.store.update(s => { event(s, '查询完成，自动开窗已暂停'); }); return;
+      }
+      if (current.hold) { await this.store.update(s => { event(s, '开窗结果待确认，不自动重试'); }); return; }
+      if (!settings.model) { await this.store.update(s => { event(s, '请先选择模型'); }); return; }
+      if (decision.kind === 'wait') { await this.store.update(s => { event(s, `本次不开窗：${decision.reason}`); }); return; }
       if (decision.kind === 'schedule') {
         await this.store.update(s => {
           if (s.enabled && !s.stop && s.generation === before.generation && s.configKey === before.configKey) {
-            s.status.nextRefresh = decision.at; s.status.reason = '已安排重置后 90 秒复查';
-          }
+            s.status.nextRefresh = decision.at;
+            if (before.status.nextRefresh === decision.at) event(s, '查询完成，开窗计划不变');
+            else {
+              const at = new Intl.DateTimeFormat('en-GB', { timeZone: settings.timezone, dateStyle: 'short', timeStyle: 'medium', hourCycle: 'h23' }).format(decision.at * 1000);
+              event(s, `计划开窗：${at} (${settings.timezone})`);
+            }
+          } else recordControlChange(s);
         }); return;
       }
       const credential = this.api.auth.load();
-      if (!credential || credential.needsLogin || credential.expiresAt <= now()) throw new Error('发送前凭证已失效，请重新查询');
+      if (!credential || credential.needsLogin || credential.expiresAt <= now()) throw new Error('凭证已失效，请重新查询');
       let permitted = false;
       await this.store.update(s => {
         if (!this.stopping && this.allowed() && s.enabled && !s.stop && !s.hold && s.generation === before.generation && s.configKey === before.configKey && allows(s.settings, now()) && now() - usage.fetchedAt <= 120) {
           s.hold = { at: now(), model: settings.model };
-          s.status.busy = '发送 hello（已开始的请求不能撤回）';
-          event(s, '准备发送一条指定模型的 hello，已保存待确认标记');
+          s.status.busy = '执行开窗指令';
+          event(s, '执行开窗指令');
           permitted = true;
         }
       });
       const gate = this.store.read();
-      if (!permitted || this.stopping || !this.allowed() || !gate.enabled || gate.stop || gate.generation !== before.generation || gate.configKey !== before.configKey || !allows(gate.settings, now())) return;
+      if (!permitted || this.stopping || !this.allowed() || !gate.enabled || gate.stop || gate.generation !== before.generation || gate.configKey !== before.configKey || !allows(gate.settings, now())) {
+        await this.store.updateRuntime(s => { event(s, '条件已变化，本次不开窗'); }); return;
+      }
       try {
         await this.api.sendHello(credential, settings.model);
-        await this.store.update(s => { event(s, '请求响应已完成，继续确认窗口是否激活'); });
+        await this.store.update(s => { event(s, '开窗指令已完成，正在确认结果'); });
       } catch (e) {
-        await this.store.update(s => { event(s, `${errorMessage(e)}；不会自动重发，继续只读确认`); });
+        await this.store.update(s => { event(s, `${errorMessage(e)}；不自动重试，正在确认结果`); });
       }
       if (this.stopping || !this.allowed() || this.store.read().stop) return;
-      await this.store.update(s => { s.status.busy = '只读确认窗口'; });
+      await this.store.update(s => { s.status.busy = '确认开窗结果'; });
       try {
         const observed = await this.api.usage(this.readAbort.signal, () => this.mayRead());
         await this.store.update(s => {
           s.status.usage = observed; s.status.stale = false;
-          if (active(observed, now())) { s.hold = null; event(s, '已观察到活动窗口'); }
-          else event(s, '尚未观察到活动窗口，保留待确认标记，禁止自动重发');
+          if (active(observed, now())) { s.hold = null; event(s, '已确认开窗'); }
+          else event(s, '开窗尚未确认，不自动重试');
         });
       } catch (e) {
-        await this.store.updateRuntime(s => { s.status.stale = true; event(s, `${errorMessage(e)}；窗口未确认，禁止自动重发`); });
+        await this.store.updateRuntime(s => { s.status.stale = true; event(s, `${errorMessage(e)}；开窗未确认，不自动重试`); });
       }
     } catch (e) {
-      await this.store.updateRuntime(s => { s.status.stale = true; s.status.nextRefresh = null; event(s, errorMessage(e)); });
+      const cancelled = this.stopping && this.readAbort.signal.aborted;
+      await this.store.updateRuntime(s => {
+        s.status.stale = true; s.status.nextRefresh = null;
+        const message = errorMessage(e);
+        const marked = /失败|错误|超时|无效|失效|拒绝|不支持|取消|fail|error|timeout|invalid|expired|denied|unsupported/i.test(message);
+        event(s, cancelled ? '额度查询已取消' : marked ? message : `失败：${message}`);
+      });
     } finally {
       release?.();
       let due: number | null = null;
       try {
         const latest = this.store.read();
-        due = latest.generation === before.generation && latest.configKey === before.configKey ? nextPoll(latest.settings, now()) : now();
+        due = latest.generation === before.generation && schedulingKey(latest) === schedulingKey(before) ? nextPoll(latest.settings, now()) : now();
       } catch { /* Invalid configuration remains blocked until it is repaired. */ }
       await this.store.updateRuntime(s => {
         s.status.busy = ''; s.status.heartbeat = now();
@@ -125,15 +162,16 @@ export class Worker {
           s.stop = false;
         }
         s.status.heartbeat = now(); s.status.nextRefresh = null; s.status.nextPoll = now();
-        s.status.busy = ''; s.status.stale = true; event(s, '后台已启动，旧的待执行计划已丢弃');
+        s.status.busy = ''; s.status.stale = true; event(s, '后台已启动');
       });
-      let published = now(), configKey = '', lastError = '';
+      let published = now(), settingsKey = '', lastError = '';
       while (!this.stopping) {
         try {
           if (this.store.readRuntime().stop || !this.allowed()) break;
           const s = this.store.read(); lastError = '';
-          if (s.configKey !== configKey) {
-            configKey = s.configKey;
+          const key = schedulingKey(s);
+          if (key !== settingsKey) {
+            settingsKey = key;
             await this.store.updateRuntime(current => { current.status.nextPoll = now(); current.status.nextRefresh = null; });
             continue;
           }
@@ -145,6 +183,7 @@ export class Worker {
           const due = Math.min(s.status.nextPoll ?? now() + 30, s.enabled ? s.status.nextRefresh ?? Infinity : Infinity, published + 30);
           await wakeup.wait(Math.max(1, due * 1000 - Date.now()));
         } catch (e) {
+          settingsKey = ''; // A repaired configuration gets a fresh check, even if its values are unchanged.
           const message = errorMessage(e);
           if (message !== lastError) {
             lastError = message;
@@ -155,7 +194,7 @@ export class Worker {
       }
     } finally {
       wakeup.close(); this.wakeup = undefined; process.off('SIGTERM', requestStop); process.off('SIGINT', requestStop);
-      try { await this.store.updateRuntime(s => { s.status.busy = ''; s.status.nextRefresh = null; s.status.heartbeat = 0; s.status.stale = true; event(s, '后台已停止，已开始的凭证保存和请求已完成'); }); }
+      try { await this.store.updateRuntime(s => { s.status.busy = ''; s.status.nextRefresh = null; s.status.heartbeat = 0; s.status.stale = true; event(s, '后台已停止'); }); }
       finally { release(); }
     }
   }

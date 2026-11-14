@@ -21,6 +21,8 @@ import { english, getLanguage, setLanguage, translate as tr } from './i18n.js';
 import type { Language } from './i18n.js';
 import { Preferences } from './preferences.js';
 import { ApplicationSession, applicationPermits } from './application.js';
+import { fetchLatestTag, isNewerVersion, RELEASES_URL } from './update.js';
+import { currentVersion, openExternal } from './runtime.js';
 const paint = (value: string, tone: Tone = 'normal', bold = false): string => color(tr(value), tone, bold);
 
 type AccountScreen = { kind: 'accounts'; items: AccountInfo[]; selected: number };
@@ -44,10 +46,10 @@ const fields: { key: keyof Settings; label: string; hint: string }[] = [
 ];
 function reasonTone(message: string): Tone {
   if (/失败|超时|错误|无效|失效|拒绝|不同|不支持|fail|timed? ?out|invalid|expired|denied|not supported|cannot/i.test(message)) return 'bad';
-  if (/待确认|未确认|不明|过期|不一致|受限|用完|缺少|未知|请先|请登录|pending|not confirmed|unknown|stale|restricted|exhausted|missing|sign in|select a model/i.test(message)) return 'warning';
+  if (/待确认|未确认|不明|过期|不一致|受限|用完|缺少|未知|跳过|请先|请登录|pending|not confirmed|unknown|stale|restricted|exhausted|missing|lacks|skipped|sign in|select a model/i.test(message)) return 'warning';
   if (/暂停|已停止|paused|stopped/i.test(message)) return 'muted';
-  if (/成功|已观察到|已启用|已保存|完成|signed in|observed|enabled|saved|complete/i.test(message)) return 'good';
-  return /等待|查询|安排|进行|发送|waiting|query|check|scheduled|active|send/i.test(message) ? 'wait' : 'normal';
+  if (/成功|已观察到|已确认|已启用|已保存|完成|signed in|observed|opening confirmed|enabled|saved|complete/i.test(message)) return 'good';
+  return /等待|查询|安排|计划|进行|发送|开窗|waiting|query|check|scheduled|opening|active|send/i.test(message) ? 'wait' : 'normal';
 }
 export async function runTui(root: Store, initialId = 'default'): Promise<void> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('TUI 需要交互终端；后台启动请用 start，查看请用 status');
@@ -80,6 +82,8 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
   let closed = false, pasting = false, exiting = false;
   let exitUntil = 0, exitTimer: NodeJS.Timeout | undefined;
   let renderPending: NodeJS.Immediate | undefined;
+  let updateTag: string | null = null;
+  const updateAbort = new AbortController();
   let finish!: () => void;
   const done = new Promise<void>(resolve => { finish = resolve; });
   let state: State | null = null;
@@ -189,7 +193,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     let statusText = '已暂停 · 仅查询额度', tone: Tone = 'muted';
     if (!identity) { statusText = '待登录'; tone = 'warning'; }
     else if (identity.needsLogin) { statusText = '需要重新登录'; tone = 'warning'; }
-    else if (state.hold) { statusText = '发送结果待确认 · 不会自动重发'; tone = 'warning'; }
+    else if (state.hold) { statusText = '开窗待确认 · 不自动重试'; tone = 'warning'; }
     else if (!running) statusText = '后台未运行';
     else if (stopping) statusText = '整个后台正在停止';
     else if (state.enabled) {
@@ -200,22 +204,28 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     // Show only the worker's published plan, never infer a guaranteed send from
     // quota reset times. A paused/pending account still has read-only checks.
     const readOnly = !state.enabled || !!state.hold || !s.model;
-    const due = Math.min(status.nextPoll ?? Infinity, readOnly ? Infinity : status.nextRefresh ?? Infinity);
+    const poll = status.nextPoll ?? Infinity, opening = readOnly ? Infinity : status.nextRefresh ?? Infinity;
+    const when = (at: number): string => at <= now() ? tr('等待执行') : time(at);
+    const openingText = (): string => `${when(opening)} · ${tr('计划开窗（条件满足时执行）')}`;
     let nextText: string, nextTone: Tone = 'muted';
     if (!running) nextText = tr('后台未运行');
     else if (stopping) nextText = tr('整个后台正在停止');
     else if (!identity || identity.needsLogin) { nextText = tr(identity ? '需要重新登录' : '待登录'); nextTone = 'warning'; }
     else if (status.busy) { nextText = tr('处理中，完成后更新计划'); nextTone = 'wait'; }
-    else if (state.check !== state.checked || Number.isFinite(due)) {
-      const when = state.check !== state.checked || due <= now() ? tr('等待执行') : time(due);
-      nextText = `${when} · ${tr(readOnly ? '仅查询额度' : '检查额度，符合条件时开窗')}`;
+    else if (state.check !== state.checked) { nextText = `${tr('等待执行')} · ${tr('手动只读查询额度')}`; nextTone = 'wait'; }
+    else if (Number.isFinite(poll) || Number.isFinite(opening)) {
+      if (opening <= poll) nextText = openingText();
+      else {
+        nextText = `${when(poll)} · ${tr(readOnly ? '仅查询额度' : '定时查询额度')}`;
+        if (Number.isFinite(opening)) nextText += ` / ${openingText()}`;
+      }
       nextTone = readOnly ? 'muted' : 'wait';
     } else nextText = tr('尚未安排');
     lines.push(paint('状态  ', 'muted') + paint(statusText, tone),
       paint('下次动作  ', 'muted') + color(nextText, nextTone),
       paint(`时段  ${s.start === s.end ? tr('全天') : `${s.start}–${s.end}`}`, 'muted'),
       paint(`时区  ${s.timezone} · 每 ${s.pollMinutes} 分钟查询`, 'muted'),
-      paint('更新  ', 'muted') + paint(`${time(usage?.fetchedAt ?? null)}${stale ? tr(' · 待更新') : ''}`, 'muted'));
+      paint('上次成功查询  ', 'muted') + paint(`${time(usage?.fetchedAt ?? null)}${stale ? tr(' · 待更新') : ''}`, 'muted'));
     if (languageError) lines.push('', color(languageError, 'warning'));
     return reflow(lines, width);
   };
@@ -230,14 +240,28 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
       : reflow(items.map(([key, label]) => pad(paint(key, 'accent'), 9) + paint(label)), width);
   };
   const headerHeight = (width: number, height: number): number => height < 6 ? 0 : width >= 28 && height >= 18 ? 3 : 1;
-  const titleFrame = (width: number, height: number): string[] => {
+  const title = (width: number, hint: boolean): string => {
+    const base = paint('Codex Window Autorefresh', 'accent', true);
+    if (!updateTag) return base;
+    // Keep a text label at every width; never signal an update by color alone.
+    const available = Math.max(1, width - 4), badge = paint('新版本', 'warning');
+    const full = `${base} · ${badge} ${paint('[按 U 跳转发布页]', 'muted')}`;
+    const medium = `${base} · ${badge} ${paint('[U]', 'muted')}`;
+    const short = `${paint('Codex Window', 'accent', true)} · ${badge} ${paint('U', 'muted')}`;
+    const minimal = `${paint('Codex Window', 'accent', true)} · ${badge}`;
+    const plain = `${base} · ${badge}`;
+    const candidates = hint ? [full, medium, short, minimal] : [plain, minimal];
+    for (const candidate of candidates) if (widthOf(candidate) <= available) return candidate;
+    return badge;
+  };
+  const titleFrame = (width: number, height: number, updateHint = true): string[] => {
     const canvas = Array.from({ length: height }, () => ' '.repeat(width));
-    const title = paint('Codex Window Autorefresh', 'accent', true), top = headerHeight(width, height);
-    if (top) place(canvas, top === 3 ? box(width, 3, '', [pad(title, width - 4, 'center')]) : [pad(ellipsis(title, width), width, 'center')], 0, 0, width);
+    const label = title(width, updateHint), top = headerHeight(width, height);
+    if (top) place(canvas, top === 3 ? box(width, 3, '', [pad(label, width - 4, 'center')]) : [pad(ellipsis(label, width), width, 'center')], 0, 0, width);
     return canvas;
   };
-  const homeFrame = (width: number, height: number): { canvas: string[]; events?: Rect } => {
-    const canvas = titleFrame(width, height), top = headerHeight(width, height);
+  const homeFrame = (width: number, height: number, updateHint = true): { canvas: string[]; events?: Rect } => {
+    const canvas = titleFrame(width, height, updateHint), top = headerHeight(width, height);
     const bordered = width >= 8 && height >= 10;
     const innerWidth = Math.max(1, width - (bordered ? 4 : 0));
     const panel = (w: number, title: string, body: string[]): string[] => bordered
@@ -417,8 +441,8 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
   const frame = (): string[] => {
     menuHit = undefined;
     const width = terminal.width, height = terminal.height;
-    const home = screen.kind === 'logs' ? null : homeFrame(width, height);
-    const canvas = home?.canvas ?? titleFrame(width, height);
+    const home = screen.kind === 'logs' ? null : homeFrame(width, height, screen.kind === 'home');
+    const canvas = home?.canvas ?? titleFrame(width, height, screen.kind === 'logs');
     if (screen.kind === 'logs') {
       const y = headerHeight(width, height), panelHeight = Math.max(1, height - y);
       const bordered = width >= 8 && panelHeight >= 5;
@@ -464,6 +488,18 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     }
     requestRender();
   };
+  const openReleases = (): void => {
+    void openExternal(RELEASES_URL).then(ok => {
+      if (!ok && !closed) report(`无法打开浏览器，请访问 ${RELEASES_URL}`, 'warning');
+    });
+  };
+  const checkUpdates = async (): Promise<void> => {
+    const latest = await fetchLatestTag(fetch, updateAbort.signal);
+    if (latest && isNewerVersion(latest, currentVersion())) {
+      updateTag = latest;
+      requestRender();
+    }
+  };
   const startJob = (title: string, back: Screen, operation: (signal: AbortSignal, announce: (message: string) => void) => Promise<Result>, mayEnable = false): void => {
     if (job || closed || exiting) return;
     const current: Job = { controller: new AbortController(), back, mayEnable };
@@ -495,7 +531,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     if (job) {
       const previous = job.back;
       job.controller.abort(); job = null; screen = previous;
-      report('已返回；已开始的授权兑换/续期会完成保存，不会自动启用。');
+      report('已返回。');
     } else if (screen.kind === 'edit' || screen.kind === 'timezones' || screen.kind === 'languages') {
       screen = screen.parent; report('本项修改已放弃。');
     } else if (screen.kind === 'login' && screen.parent) {
@@ -531,7 +567,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     const target = store, id = accountId;
     if (job?.mayEnable) { const previous = job.back; job.controller.abort(); job = null; screen = previous; }
     const task = actions.interrupt(target).then(() => {
-      if (!closed && accountId === id) report('此账号已暂停；其他账号不受影响。');
+      if (!closed && accountId === id) report('账号已暂停。');
     }).catch(e => { if (!closed && accountId === id) report(errorMessage(e), 'bad'); }).finally(() => { if (!closed) { refresh(true); requestRender(); } });
     track(task);
   };
@@ -646,6 +682,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
       else { focusModal(); edit(text, key); }
       return;
     }
+    if (!key.ctrl && !key.meta && key.name === 'u' && (screen.kind === 'home' || screen.kind === 'logs')) { openReleases(); return; }
     if (key.ctrl || key.meta) { requestRender(); return; }
     if (screen.kind === 'logs') {
       if (key.name === 'up') scrollLog(-1);
@@ -683,13 +720,13 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
         case 'i': pause(); break;
         case 'c': startJob('只读查询', home, async signal => {
           await ensureWorker(root, signal); signal.throwIfAborted(); await actions.check(context.store);
-          return { message: '已请求此账号只读查询，不会发送。', tone: 'wait' };
+          return { message: '已请求只读查询。', tone: 'wait' };
         }); break;
         case 'r': {
           const snapshot = context.store.read();
           startJob('启用当前账号', home, async signal => {
             await ensureWorker(root, signal); await actions.resume(context.store, context.auth, signal, snapshot.generation, snapshot.configKey);
-            return { message: '此账号已启用，将先查询真实额度。' };
+            return { message: '账号已启用。' };
           }, true); break;
         }
         case 'x': startJob('停止整个后台', home, async () => {
@@ -727,14 +764,14 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
         if (selected.selected === selected.items.length) {
           accounts.requireManaged(); screen = { kind: 'login', selected: 0, adding: true, parent: selected };
         } else {
-          selectAccount(selected.items[selected.selected]!.id); report('已切换，显示本地缓存；其他账号继续运行。');
+          selectAccount(selected.items[selected.selected]!.id); report('账号已切换。');
         }
       } else if (selected.kind === 'login') {
         const browser = selected.selected === 1;
         startJob(browser ? '浏览器授权' : '设备码授权', selected, async (signal, announce) => {
           const saved = await accounts.login(context.auth, context.id, browser, announce, signal);
           context.api.clearModels(); contexts.get(saved)?.api.clearModels();
-          return { screen: { kind: 'home' }, account: saved, message: '登录成功，此账号保持暂停；其他账号不受影响。' };
+          return { screen: { kind: 'home' }, account: saved, message: '登录成功，账号保持暂停。' };
         });
       } else if (selected.kind === 'models') {
         const model = selected.models[selected.selected]!;
@@ -805,6 +842,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
   try {
     session = await ApplicationSession.open(root.home, 'panel', () => { void gracefulClose(); });
     terminal.start(); refresh(true);
+    void checkUpdates().catch(() => { /* Update checks are optional and never block the panel. */ });
     watchAccount();
     try {
       rootWatcher = watch(root.home, (_event, filename) => {
@@ -819,6 +857,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     closed = true;
     for (const controller of controllers) controller.abort();
     clearInterval(tick); clearTimeout(exitTimer); clearTimeout(noticeTimer);
+    updateAbort.abort();
     watcher?.close(); rootWatcher?.close();
     if (refreshPending) clearImmediate(refreshPending);
     if (renderPending) clearImmediate(renderPending);
