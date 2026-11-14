@@ -186,12 +186,14 @@ test('device flow accepts the server-prefixed pending code and exchanges once', 
       json(response, tokenReply('device-refresh'));
     }
   });
-  const notices = [];
-  await f.auth.deviceLogin(message => notices.push(message));
+  const notices = [], codes = [];
+  await f.auth.deviceLogin((message, userCode) => { notices.push(message); if (userCode) codes.push(userCode); });
   assert.equal(polls, 2); assert.match(notices[0], /TEST-CODE/);
+  assert.deepEqual(codes, ['TEST-CODE'], 'the TUI receives the human-facing user_code, not the OAuth device_auth_id');
   assert.equal(f.auth.load().refreshToken, 'device-refresh');
   assert.equal(f.calls.filter(c => c.path === '/oauth/token').length, 1);
   assert(!readFileSync(f.store.path, 'utf8').includes('device-refresh'));
+  assert(!readFileSync(f.store.path, 'utf8').includes('TEST-CODE'));
 });
 test('device cancellation preserves the previous login and makes no token exchange', async t => {
   const f = await fixture(t, (_call, response) => json(response, { device_auth_id: 'test-device', user_code: 'TEST', interval: '1' }));

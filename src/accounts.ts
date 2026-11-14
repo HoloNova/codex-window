@@ -151,7 +151,7 @@ export class Accounts {
       } finally { releaseState?.(); release?.(); releaseAccount(); }
     }
   }
-  async login(source: Auth, sourceId: string, browser: boolean, announce: (message: string) => void, signal?: AbortSignal): Promise<string> {
+  async login(source: Auth, sourceId: string, browser: boolean, announce: (message: string, userCode?: string) => void, signal?: AbortSignal): Promise<string> {
     this.requireManaged();
     let saved: string | undefined;
     const accept = async (value: Credentials): Promise<void> => { saved = await this.acceptLogin(value, sourceId); };

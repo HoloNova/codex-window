@@ -30,7 +30,9 @@ are not official binary targets.
 
 First use
 ---------
-L signs in, M selects a model, R enables the selected account. A switches/adds
+L signs in, M selects a model, R enables the selected account. Device-code
+sign-in copies the code to the system clipboard when available; the code stays
+visible and selectable, with a bottom-right confirmation. A switches/adds
 accounts; switching shows local cached data only. New accounts start paused.
 S edits settings and the global interface language (English / Simplified Chinese).
 Click menu items to select, then Enter to edit/confirm. Settings arrows wrap at

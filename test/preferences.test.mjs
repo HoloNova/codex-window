@@ -62,6 +62,9 @@ test('concise operation messages preserve pending outcomes and translate nested 
     ['查询额度网络失败或超时；开窗未确认，不自动重试', 'Query usage: network failure or timeout; opening not confirmed; no automatic retry'],
     ['计划开窗：14/11/2026, 14:26:30 (Asia/Shanghai)', 'Opening scheduled: 14/11/2026, 14:26:30 (Asia/Shanghai)'],
     ['凭证已失效，请重新查询', 'Credentials expired; check again'],
+    ['设备码已复制到剪切板', 'Device code copied to clipboard'],
+    ['无法复制设备码，请手动选择复制', 'Could not copy the device code; select and copy it manually'],
+    ['Esc 取消等待 · ↑↓/PgUp/PgDn 翻阅', 'Esc Cancel wait · ↑↓/PgUp/PgDn Scroll'],
   ];
   for (const [zh, en] of pairs) {
     assert.equal(english(zh), en);

@@ -1,96 +1,149 @@
 # AGENTS.md
 
-> 通用 Coding Agent 工作规范。适用于当前仓库；项目特有的命令、目录和架构规则应另行补充，不得凭经验推断。
+> General rules for coding agents in this repository. Verify project-specific facts from the codebase; never invent commands, architecture, or existing behavior.
 
-## 1. Core Principles｜核心原则
+## 1. Authority & Boundaries
 
-- **以用户意图为准。** 明确的执行请求应推进至可交付状态；纯咨询、评审或讨论不等于授权修改。
-- **自主完成已授权的工作。** 不为可自行调查、可逆且低风险的步骤反复征求确认；也不得擅自扩大需求范围。
-- **最小必要变更。** 优先复用现有实现与约定，避免顺手重构、无关清理、过度抽象或新增依赖。
-- **可解释性优先。** 核心业务规则、数据流和架构决策必须能向用户说明“为什么这样设计”，而不只是“代码怎样运行”。
-- **遵守明确边界。** 不因提高效率而绕过本文件规定的代码审查参与、Git 安全和手动 UI 验收要求。
+- **User intent governs scope.** Questions, reviews, and design discussions do not authorize file changes. Explicit implementation requests authorize only the stated scope.
+- **Work autonomously within authorization.** Investigate and perform low-risk, reversible steps without repeated permission. Do not expand scope or bypass approval gates.
+- **Changes to agent instructions require explicit approval.** Do not create,
+  edit, delete, rename, or overwrite this file or any nested `AGENTS.md` on your
+  own initiative. Present the proposed changes in chat first. The user may apply
+  them directly or explicitly authorize the main agent to apply the approved
+  draft. Such approval is limited to the stated files and changes; never delegate
+  instruction-file edits to subagents.
+- **Instructions are not enforcement.** Respect tool permissions, hooks, sandbox restrictions, and platform approvals. Never disable or circumvent them.
+- Prefer minimal changes, established conventions, explainable decisions, and independently verifiable results.
 
-## 2. Task Workflow｜任务处理
+## 2. Task Types & Approval Gates
 
-### 任务类型与权限
+- **Consultation / review:** Inspect and advise only; do not modify files without explicit authorization.
+- **Diagnosis:** Establish symptoms, root cause, and supporting evidence; explain findings before applying a fix unless fixing was already authorized.
+- **Small fix / feature:** Investigate, briefly explain the approach, implement within scope, and run focused verification without step-by-step approval.
+- **Core logic / public API / data model / persistence / architecture:** Present a reviewable design and key trade-offs before implementation. Do not ask again when the user has already approved that design.
+- **Commit / push / merge / release / deploy / destructive operations:** Require separate, explicit authorization. Approval of a plan or successful tests does not grant these permissions.
 
-- **咨询 / 代码审查 / 方案讨论：** 只调查、解释并给出判断；未经明确要求不修改代码或配置。
-- **故障排查：** 优先根据实际错误日志、堆栈、复现行为和相关源码定位问题；先向用户说明根因及证据，不得未经说明直接修复。
-- **已明确授权的常规修复或小型实现：** 调查现状、简要解释改动动因后，在授权范围内完成修改与必要验证；不为每个执行步骤单独请求许可。
-- **核心业务逻辑、公共接口、数据模型或架构变更：** 先调查并提出可审查的设计，解释关键取舍；用户参与决定后再实施。明确的既有设计授权无须重复确认。
-- **提交、发布、部署、破坏性操作：** 遵守独立授权边界；完成准备工作不代表获得执行这些操作的许可。
+## 3. Workflow & Artifacts
 
-### 标准执行过程
+1. Establish the goal, constraints, current worktree state, and relevant code/configuration.
+2. Gather evidence; inspect logs and reproduction steps first for runtime failures.
+3. Prefer reuse; assess alternatives, compatibility, risks, and verification criteria.
+4. Obtain design approval when required, then make only the necessary changes.
+5. Verify behavior and report outcomes, limitations, and unfinished work.
 
-1. 确认任务目标和边界，检查与任务有关的项目说明、实际实现及工作区状态。
-2. 先获取证据，再判断原因或提出方案；已有日志系统且问题有运行错误时，优先查看相关日志。
-3. 判断是否主要通过组合已有能力解决，以及收益是否值得引入复杂度。
-4. 按任务类型决定是否需要在编码前让用户审阅关键设计。
-5. 只修改与目标直接相关的内容，完成必要验证并报告结果。
+Use documentation **proportionally**, not mechanically:
 
-- 缺少必要信息时，先使用可用工具调查；只有关键决策无法从现有信息确定时才向用户提问。
-- 遇到阻碍时明确说明已完成部分、阻碍证据和剩余工作，不把未完成事项描述成已完成。
+- **Simple:** Investigate → implement → verify; no new planning files.
+- **Moderate:** Provide a short plan in chat: scope, approach, risks, and checks.
+- **Complex / high-impact:** Use existing equivalent artifacts or, when useful, create:
+  - `intent.md` — problem, desired outcome, scope, constraints, open questions; avoid premature implementation decisions.
+  - `spec.md` — behavior, interfaces, architecture, data flow, design decisions, acceptance criteria.
+  - `plan.md` — affected modules/files, execution order, risks, verification steps.
 
-## 3. Investigation & Evidence｜调查与证据
+For complex changes, plan using read-only investigation before modifying code. Record material deviations; seek renewed approval if scope, architecture, or accepted criteria change. Do not create documents solely to satisfy a template.
 
-- 将信息区分为 **已验证事实、待验证推测、未知事项**；不得把假设写成既有功能或项目事实。
-- 规划可以提出明确标注的假设，但实现依赖的关键假设必须先核实。
-- 优先阅读最相关的代码、配置、日志和现有测试；不要为一个局部问题无差别扫描整个仓库。
-- 分析 Bug 时区分症状与根因，优先解决根因，避免仅压制报错或添加无依据的兜底逻辑。
-- 若旧文档与实际代码冲突，以已验证的当前实现为依据，并指出差异。
+## 4. Evidence & Design Quality
 
-## 4. Design & Implementation｜设计与实现
+- Distinguish **verified facts**, **hypotheses**, and **unknowns**. Validate assumptions critical to implementation.
+- Read only relevant source, config, tests, and logs; avoid broad scans without cause.
+- Fix root causes rather than suppressing errors or adding speculative fallbacks.
+- When documentation conflicts with verified code behavior, explain the discrepancy; do not silently rewrite instructions.
+- Reuse existing modules and patterns. Avoid unnecessary abstractions, dependencies, compatibility layers, configuration, and unrelated cleanup.
+- Assess callers, migrations, backward compatibility, failure paths, and single sources of truth before changing shared contracts.
+- Explain non-obvious design reasons and constraints in comments; do not narrate obvious code.
 
-### 变更前评估
+## 5. Tools & Delegation
 
-- **复用：** 新需求能否通过组合已有模块、接口和机制实现？
-- **成本：** 新抽象、新依赖或重构的实际收益是否大于引入的复杂度和维护负担？
-- **一致性：** 是否遵守现有架构边界，避免平行实现、重复状态及重复规则源？
+- **Autonomous delegation is authorized.** The main agent may use `pi-subagents`
+  within the approved task scope without asking for permission for each delegation.
+  It decides whether delegation is useful, which agent/model to use, and whether
+  execution should be parallel or sequential.
+- **Delegate for a concrete benefit, not by default.** Complete simple tasks
+  directly. Complex code exploration, independent research, bounded module
+  implementation, and code review are suitable delegation candidates when they
+  improve efficiency, specialization, or independent verification. Do not use
+  subagents merely to use them.
+- **Choose models proportionally.** Prefer
+  `opencode-go/deepseek-v4.1-flash/max` for lightweight tasks when available.
+  Confirm the executable model identifier through `pi-subagents` before use.
+  Choose a stronger model when correctness, security, or reasoning demands it;
+  the preferred model is guidance, not a mandatory dependency.
+- **Keep ownership explicit.** Each delegated task must have a clear objective,
+  scope, edit boundary, relevant context, expected output, and verification
+  criteria. Subagents inherit the same scope and approval restrictions as the
+  main agent; delegation does not expand authorization.
+- **The main agent remains accountable.** It owns coordination, integration,
+  assessment of delegated findings, and final verification. Subagent claims,
+  successful exits, and review conclusions are evidence, not proof by themselves.
+- **Actively supervise delegated work.** Periodically inspect active subagents
+  rather than waiting only for their final output. Choose the interval according
+  to task complexity, risk, duration, and uncertainty; shorten it when direction
+  is uncertain or costly mistakes could accumulate. Review immediately at
+  handoffs, blockers, or material changes. Typical intervals are 3–5 minutes for
+  complex/high-risk implementation and 10–15 minutes for stable, bounded work;
+  these are guidance, not fixed requirements.
+- **Check direction and evidence, not just liveness.** Inspect actual progress,
+  relevant code changes, test results, and unresolved assumptions. Check adherence
+  to the approved design, user constraints, assigned model, edit boundaries,
+  shared contracts, and approval gates. A running process or successful exit
+  does not establish correctness or completion.
+- **Guide early and verify follow-through.** Give timely, concrete guidance when
+  a subagent drifts, stalls, or encounters an important ambiguity. Explain the
+  constraint, supporting evidence, and expected correction without unnecessarily
+  taking over its task. Verify that guidance was understood and applied;
+  delivery receipts alone are not proof. Pause unsafe work and escalate material
+  scope or architecture changes instead of silently approving them.
+- **Keep supervision bounded and honest.** Use task/session-scoped reminders when
+  supported; avoid tight polling, redundant checks, and unnecessary extra agents.
+  Cancel reminders when the target completes, fails, pauses, or is stopped.
+  Do not install persistent monitoring services. If timed supervision is
+  unavailable, disclose that limitation and use explicit checkpoints instead;
+  never claim monitoring that did not occur.
+- **Prevent conflicting writes.** Parallel writers must have non-overlapping
+  ownership or authorized isolation. Do not create or switch branches without
+  permission. Prefer read-only independent reviewers for review tasks.
+- **Approval gates still apply.** Delegation does not authorize unapproved
+  architecture changes, public API or persistence changes, scope expansion,
+  commits, pushes, releases, deployments, or destructive operations. Follow
+  Section 2; do not ask again for a design the user has already approved.
+- **Report material delegation outcomes.** Briefly explain the division of work
+  when useful, and report blockers or unresolved disagreements. Do not narrate
+  every child action or hide failed delegation.
+- Prefer existing project tools and commands; minimize redundant searches,
+  reads, checks, and context overhead.
+- Load skills when relevant. Prompt instructions and skills are guidance,
+  not substitutes for enforceable permission boundaries.
 
-### 实现约束
+## 6. Testing & Review
 
-- 优先采用仓库已有风格、类型定义、错误处理方式和工具链，不凭偏好替换技术栈。
-- 不引入需求之外的兼容层、扩展点、配置项或通用框架；确有必要时说明收益。
-- 改动公共 API、持久化格式、数据迁移、外部依赖或跨模块协议前，应明确兼容性与影响范围。
-- 注释与文档应解释非显然的设计原因和约束，不重复代码可以直接表达的操作过程。
-- 不把“顺手优化”混入当前任务；发现无关问题可简要指出，但不擅自扩大修改范围。
+- Run the **smallest effective checks** for the affected behavior; add type checks, lint, builds, or broader tests when risk warrants.
+- Tests must check meaningful observable behavior or invariants, not merely mirror implementation details.
+- **Bug fixes:** Where practical, reproduce the failure first; confirm tests fail for the expected reason, then pass after the fix.
+- **Features / refactors:** Verify acceptance criteria and relevant behavioral compatibility.
+- Never weaken, delete, or rewrite accepted tests or criteria merely to obtain a pass. Explain and request approval for substantive changes to accepted criteria.
+- **Never create or run automated UI tests.** The user performs UI acceptance manually; provide concise manual steps when needed.
+- Documentation-only changes normally need no tests or CI. Do not rerun checks already passed for unchanged code; never claim an unrun check passed.
+- For complex/high-risk work, use an independent reviewer or verifier when useful. Review for correctness, security, compatibility, and spec compliance; avoid style-only noise. Follow an existing `REVIEW.md` if present.
 
-## 5. Tool Use & Delegation｜工具与委派
+## 7. Git, Secrets & Deployment Safety
 
-- **默认由主 Agent 直接完成任务。** 仅当工作可以独立拆分、委派具有明确收益时，才建议使用子代理；先简要说明任务划分和理由。
-- 主 Agent 对委派结果的正确性、整合和最终交付负责，不把多个代理的未经核实结论直接拼接。
-- 优先使用项目已有命令与工具；不为一次性任务增加长期依赖或自动化设施。
-- 控制上下文与工具成本，减少重复搜索、重复读取和无价值的检查。
+- **Never commit, push, merge, release, or deploy without explicit user permission.** Preparing a PR or passing CI does not imply permission.
+- **Without explicit permission, do not run** `git checkout`, `git switch`, `git restore`, `git reset --hard`, `git clean`, `git stash`, force-push, rebase, history rewrites, branch deletion, or any operation that may overwrite user work. Do not create or change branches unilaterally.
+- Preserve uncommitted changes. Do not overwrite, discard, stage, or include unrelated work; report conflicts before proceeding.
+- Once authorized to commit, keep each commit focused; inspect staged changes and the commit message before committing.
+- Git Author: `holonova <holonova25@gmail.com>`. Never use an AI identity as Author or invent a `Co-Authored-By` identity/email.
+- Do not access credentials unless essential to the authorized task; never expose secrets, tokens, or private keys in source, logs, commits, or public output.
+- Use only approved deployment/rollback paths. Never bypass safety gates or expand privileges. Do not install recurring jobs, monitoring agents, or autonomous maintenance workflows without authorization.
 
-## 6. Testing & Verification｜测试与验证
+## 8. Communication & Project Rules
 
-- 按变更影响和风险选择**最小但有效**的验证范围，优先运行受影响模块的定向测试。
-- 测试应能发现真实回归或验证关键行为；不编写仅镜像实现、无法提供独立验证价值的测试。
-- 需要时执行相关类型检查、静态检查或构建；不要机械地把全量测试当作每次修改的前置条件。
-- 纯文档或不影响运行行为的修改通常不需要测试，也不应仅为此主动触发 CI。
-- **禁止编写或运行 UI 自动化测试。** UI 验收由用户在浏览器中手动完成；必要时提供简短验收要点。
-- 同一版本的相关检查已通过且代码未变化时，不重复运行。不得把未运行的检查表述为已通过。
-- 全量测试可以留给合适的集成阶段或现有 CI；若存在高风险跨模块变更，则按实际影响补充必要验证。
+- Explain **why** a problem exists and **why** the chosen solution fits before listing implementation details. Avoid verbose tool transcripts.
+- For substantial tasks, briefly state the plan; update only for meaningful findings, blockers, or design changes.
+- Final delivery must distinguish **completed work**, **verification actually performed**, and **outstanding issues/risks**. Do not claim incomplete work is complete.
+- Ask only when a material decision cannot be resolved from available evidence; otherwise proceed within authorization.
+- Be concise, direct, and structured.
 
-## 7. Git & Change Safety｜Git 与工作区安全
-
-- **未经用户明确许可，不得创建提交。** 不得擅自推送、合并、发布或部署。
-- **未经明确许可，不得执行 `git checkout`、`git restore`、`git reset --hard`、`git clean`、强制推送、重写历史、删除分支或其他可能覆盖用户工作的操作。** 不得擅自切换分支。
-- 尊重现有未提交更改；不覆盖、不清理、不把无关文件纳入本次变更。遇到冲突先识别并说明。
-- 获得提交授权后，一个提交只表达一项完整改动：同一目的的代码、测试和文档应一并提交；无关工作分开提交。
-- 提交前检查暂存区内容，确认改动范围、文件名和提交信息准确，不混入无关内容。
-- Git Author 使用用户身份：`holonova <holonova25@gmail.com>`。AI 不能作为 Author；使用 `Co-Authored-By` 标注 AI 协作时，不得虚构身份或邮箱。
-- 不将密钥、Token、私有凭据等敏感信息写入代码、提交记录或公开输出。
-
-## 8. Communication & Delivery｜沟通与交付
-
-- 优先回答**为什么存在问题、为什么选择该方案**，再说明具体改动；避免只报告执行流水账。
-- 复杂任务可先说明简短计划；执行中仅在出现关键结论、阻碍或重要设计选择时更新进展。
-- 最终交付应明确：完成了什么、验证了什么、哪些没有验证或尚未完成。
-- 不过度解读用户的疑问；区分询问可行性、比较方案与明确的实施指令。
-- 回答简洁、直接，避免不必要的背景复述、套话和模板化总结。
-
-## 9. Project-Specific Notes｜项目专项规则
+### Project-specific notes (user-maintained)
 
 - 当前实现为 TypeScript + Node.js 24+，源码在 `src/`；运行时只依赖 Node 标准库。
 - 安装/构建：`npm ci`、`npm run build`；类型检查：`npm run check`；非 UI 测试：`npm test`。
@@ -99,7 +152,7 @@
 - 本机仍有旧刷新服务。未经单独授权，不得全局安装覆盖旧命令，也不得停止、替换或重新部署这些服务。
 - 最小范围和验收边界见 `docs/PLAN.md`、`README.md`；TUI 只能手动验收。
 
-## 10. User Additions｜用户自定义规则
+### User additions (user-maintained)
 
 - TUI 交互统一留在同一个界面内，不混用临时 readline 问答切换输入所有权。
 - Esc 一律返回上一步；Ctrl+C 一律用于连续两次确认退出，不兼任取消操作。

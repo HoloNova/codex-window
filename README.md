@@ -24,7 +24,7 @@ No packages for macOS, ARM or Alpine/musl. Windows binaries are unsigned and may
 
 ## Get started
 
-1. Press **L** to sign in.
+1. Press **L** to sign in. Device-code sign-in copies the code to the system clipboard when a clipboard tool is available; the code stays visible and selectable, with a bottom-right confirmation. If copying is unavailable, the panel says so and leaves the code for manual selection.
 2. Press **M** to select a model and **S** to set the time zone, operating hours and check interval.
 3. Press **R** to enable the current account.
 

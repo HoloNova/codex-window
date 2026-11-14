@@ -109,20 +109,20 @@ export class Auth {
     });
     return credentials(data);
   }
-  async deviceLogin(announce: (message: string) => void, signal?: AbortSignal, accept: (value: Credentials) => Promise<void> | void = value => this.save(value)): Promise<void> {
+  async deviceLogin(announce: (message: string, userCode?: string) => void, signal?: AbortSignal, accept: (value: Credentials) => Promise<void> | void = value => this.save(value)): Promise<void> {
     const deadline = AbortSignal.timeout(15 * 60_000);
     const cancelled = signal ? AbortSignal.any([deadline, signal]) : deadline;
     const root = this.http.urls.issuer;
     const initial = object(await this.http.json('获取设备码', `${root}/api/accounts/deviceauth/usercode`, jsonPost({ client_id: CLIENT_ID, scope: SCOPE, originator: 'codex_cli_rs' }), cancelled));
     if (initial.error) throw new Error('获取设备码失败，请检查账号是否允许设备码登录');
-    const id = text(initial.device_auth_id), code = text(initial.user_code);
+    const deviceAuthId = text(initial.device_auth_id), userCode = text(initial.user_code);
     const rawInterval = Number(initial.interval ?? 5);
     let interval = Number.isFinite(rawInterval) ? Math.max(1, Math.min(60, rawInterval)) : 5;
-    announce(`请访问 ${root}/codex/device\n输入设备码：${code}\n等待授权（最长 15 分钟）`);
+    announce(`请访问 ${root}/codex/device\n输入设备码：${userCode}\n等待授权（最长 15 分钟）`, userCode);
     while (!cancelled.aborted) {
       await delay(interval * 1000, undefined, { signal: cancelled });
       let response;
-      try { response = await this.http.request('等待设备授权', `${root}/api/accounts/deviceauth/token`, jsonPost({ device_auth_id: id, user_code: code, client_id: CLIENT_ID }), cancelled); }
+      try { response = await this.http.request('等待设备授权', `${root}/api/accounts/deviceauth/token`, jsonPost({ device_auth_id: deviceAuthId, user_code: userCode, client_id: CLIENT_ID }), cancelled); }
       catch { if (cancelled.aborted) break; continue; }
       let body: unknown;
       try { body = parseJson(response.body); }

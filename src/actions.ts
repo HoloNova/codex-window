@@ -49,7 +49,7 @@ export async function stop(store: Store): Promise<void> {
     await store.updateRuntime(s => { s.stop = true; s.generation++; s.status.nextRefresh = null; event(s, '后台保持停止；请修正 config.json 并设 enabled=false，或手动复核启用'); });
   }
 }
-export async function login(store: Store, auth: Auth, browser: boolean, announce: (message: string) => void, signal?: AbortSignal): Promise<void> {
+export async function login(store: Store, auth: Auth, browser: boolean, announce: (message: string, userCode?: string) => void, signal?: AbortSignal): Promise<void> {
   await interrupt(store);
   const release = await lock(join(store.home, 'account.lock'), 120_000, signal);
   try {

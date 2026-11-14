@@ -22,7 +22,7 @@ import type { Language } from './i18n.js';
 import { Preferences } from './preferences.js';
 import { ApplicationSession, applicationPermits } from './application.js';
 import { fetchLatestTag, isNewerVersion, RELEASES_URL } from './update.js';
-import { currentVersion, openExternal } from './runtime.js';
+import { currentVersion, copyToClipboard, openExternal } from './runtime.js';
 const paint = (value: string, tone: Tone = 'normal', bold = false): string => color(tr(value), tone, bold);
 
 type AccountScreen = { kind: 'accounts'; items: AccountInfo[]; selected: number };
@@ -389,7 +389,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
       case 'wait':
         title = screen.title;
         body.push(...reflow((screen.message || '正在处理…').split(/\r?\n/).map(line => paint(line, 'wait')), contentWidth));
-        hint = 'Esc 取消等待 · ↑↓/滚轮 翻阅'; extra = '已开始的凭证保存会安全收尾。';
+        hint = 'Esc 取消等待 · ↑↓/PgUp/PgDn 翻阅'; extra = '已开始的凭证保存会安全收尾。';
         break;
       default: return [];
     }
@@ -471,7 +471,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
       if (!closed) {
         try {
           const rows = frame();
-          terminal.trackMouse(screen.kind !== 'home' || homeMax > 0);
+          terminal.trackMouse(screen.kind === 'home' ? homeMax > 0 : screen.kind !== 'logs' && screen.kind !== 'wait');
           if (!terminal.render(rows)) menuHit = undefined;
         } catch (e) { menuHit = undefined; terminal.render([paint(errorMessage(e), 'bad'), tr('Ctrl+C 连按两次退出')]); }
       }
@@ -500,7 +500,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
       requestRender();
     }
   };
-  const startJob = (title: string, back: Screen, operation: (signal: AbortSignal, announce: (message: string) => void) => Promise<Result>, mayEnable = false): void => {
+  const startJob = (title: string, back: Screen, operation: (signal: AbortSignal, announce: (message: string, userCode?: string) => void) => Promise<Result>, mayEnable = false): void => {
     if (job || closed || exiting) return;
     const current: Job = { controller: new AbortController(), back, mayEnable };
     job = current; controllers.add(current.controller);
@@ -509,8 +509,16 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     const active = (): boolean => !closed && job === current && !current.controller.signal.aborted;
     const task = Promise.resolve().then(() => {
       current.controller.signal.throwIfAborted();
-      return operation(current.controller.signal, message => {
-        if (active()) { waiting.message = tr(message); waiting.offset = 0; requestRender(); }
+      return operation(current.controller.signal, (message, userCode) => {
+        if (!active()) return;
+        waiting.message = tr(message); waiting.offset = 0;
+        if (userCode) {
+          // Copy the human-facing code, never the OAuth polling identifier.
+          void copyToClipboard(userCode).then(ok => {
+            if (active()) report(ok ? '设备码已复制到剪切板' : '无法复制设备码，请手动选择复制', ok ? 'good' : 'warning');
+          }, () => { if (active()) report('无法复制设备码，请手动选择复制', 'warning'); });
+        }
+        requestRender();
       });
     }).then(result => {
       if (!active()) return;

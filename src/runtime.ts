@@ -24,6 +24,46 @@ export function licenseText(): string {
   return isSea() ? getAsset('licenses.txt', 'utf8') : ['LICENSE', 'NOTICE.md'].map(name => readFileSync(new URL('../' + name, import.meta.url), 'utf8')).join('\n\n');
 }
 export function currentVersion(): string { return buildInfo().version; }
+export interface ClipboardCommand { command: string; args: string[] }
+export function clipboardCommands(platform: NodeJS.Platform = process.platform): ClipboardCommand[] {
+  if (platform === 'win32') return [{ command: 'clip', args: [] }];
+  if (platform === 'darwin') return [{ command: 'pbcopy', args: [] }];
+  if (platform === 'linux') return [
+    { command: 'wl-copy', args: [] },
+    { command: 'xclip', args: ['-selection', 'clipboard'] },
+    { command: 'xsel', args: ['--clipboard', '--input'] },
+  ];
+  return [];
+}
+function writeClipboard({ command, args }: ClipboardCommand, value: string, timeoutMs: number): Promise<boolean> {
+  return new Promise(resolve => {
+    let settled = false, timer: NodeJS.Timeout | undefined;
+    const finish = (ok: boolean): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(ok);
+    };
+    try {
+      const child = spawn(command, args, { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
+      timer = setTimeout(() => { finish(false); child.kill(); }, timeoutMs);
+      timer.unref();
+      child.once('error', () => finish(false));
+      child.once('exit', code => finish(code === 0));
+      child.stdin?.on('error', () => finish(false));
+      child.stdin?.end(value, 'utf8');
+      // A clipboard server may outlive this panel; do not keep the TUI alive.
+      child.unref();
+    } catch { finish(false); }
+  });
+}
+// Clipboard helpers are best-effort: a headless Linux session may have none of
+// these tools, so the caller keeps the visible user code as a fallback.
+export async function copyToClipboard(value: string, commands: ClipboardCommand[] = clipboardCommands(), timeoutMs = 2000): Promise<boolean> {
+  if (!value) return false;
+  for (const command of commands) if (await writeClipboard(command, value, timeoutMs)) return true;
+  return false;
+}
 export function versionText(): string {
   const info = buildInfo();
   return `Codex Window ${info.version} (${info.platform}-${info.arch}; Node ${info.node}; ${info.commit ?? 'source'})`;

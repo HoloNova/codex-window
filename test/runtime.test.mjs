@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { nativeTrayPath } from '../dist/runtime.js';
+import { clipboardCommands, copyToClipboard, nativeTrayPath } from '../dist/runtime.js';
 const exec = promisify(execFile);
 
 test('license and version are local, work without account initialization and ignore bad display preferences', async t => {
@@ -23,6 +23,33 @@ test('license and version are local, work without account initialization and ign
   assert.equal((await call('--license')).stdout, license);
   assert.equal(readFileSync(preference, 'utf8'), '{invalid');
   assert.equal(existsSync(join(home, 'state.json')), false);
+});
+test('clipboard fallbacks use fixed, shell-free commands for each platform', () => {
+  assert.deepEqual(clipboardCommands('win32'), [{ command: 'clip', args: [] }]);
+  assert.deepEqual(clipboardCommands('darwin'), [{ command: 'pbcopy', args: [] }]);
+  assert.deepEqual(clipboardCommands('linux'), [
+    { command: 'wl-copy', args: [] },
+    { command: 'xclip', args: ['-selection', 'clipboard'] },
+    { command: 'xsel', args: ['--clipboard', '--input'] },
+  ]);
+  assert.deepEqual(clipboardCommands('freebsd'), []);
+  assert(clipboardCommands('linux').every(({ command, args }) => !command.includes('/') && args.every(arg => !arg.includes('|') && !arg.includes(';'))));
+});
+test('clipboard writes the code through a working command and falls back after a failure', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'codex-window-clipboard-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const script = join(directory, 'copy.mjs'), output = join(directory, 'clipboard.txt');
+  writeFileSync(script, `import { writeFileSync } from 'node:fs'; let data = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', part => data += part); process.stdin.on('end', () => writeFileSync(process.argv[2], data));`);
+  const working = { command: process.execPath, args: [script, output] };
+  const failing = { command: process.execPath, args: ['-e', 'process.exit(1)'] };
+  assert.equal(await copyToClipboard('TEST-CODE', [failing, working]), true);
+  assert.equal(readFileSync(output, 'utf8'), 'TEST-CODE');
+  assert.equal(await copyToClipboard('TEST-CODE', [failing]), false);
+  assert.equal(await copyToClipboard('TEST-CODE', [{ command: join(directory, 'missing-clipboard-tool'), args: [] }]), false);
+  const started = Date.now();
+  assert.equal(await copyToClipboard('TEST-CODE', [{ command: process.execPath, args: ['-e', 'setTimeout(() => {}, 5000)'] }], 50), false);
+  assert(Date.now() - started < 1500, 'a hung clipboard command must be bounded');
+  assert.equal(await copyToClipboard('', [working]), false);
 });
 test('cached core resolves its original launcher while source/legacy runs retain their default', t => {
   const previous = process.env.CODEX_WINDOW_LAUNCHER;
