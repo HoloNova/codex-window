@@ -11,7 +11,7 @@ import type { AccountInfo } from './accounts.js';
 import type { Settings, State, Store } from './state.js';
 import { now, validateSettings } from './state.js';
 import * as actions from './actions.js';
-import { ensureWorker, errorMessage } from './worker.js';
+import { ensureWorker, errorMessage, schedulingKey } from './worker.js';
 import { clean, paint as color, quota, Terminal, widthOf, wrap } from './terminal.js';
 import type { Tone } from './terminal.js';
 import { box, ellipsis, flow, pad, place, reflow, scrollRows } from './layout.js';
@@ -210,7 +210,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     const readOnly = !state.enabled || !!state.hold || !s.model;
     const poll = status.nextPoll ?? Infinity, opening = readOnly ? Infinity : status.nextRefresh ?? Infinity;
     const task = state.hold?.task;
-    const confirming = state.enabled && task?.generation === state.generation && task.configKey === state.configKey ? task.confirmAt ?? Infinity : Infinity;
+    const confirming = state.enabled && task?.generation === state.generation && task.configKey === schedulingKey(state) ? task.confirmAt ?? Infinity : Infinity;
     const when = (at: number): string => at <= now() ? tr('等待执行') : time(at);
     const openingText = (): string => `${when(opening)} · ${tr('计划开窗（条件满足时执行）')}`;
     const confirmationText = (): string => `${when(confirming)} · ${tr('确认开窗结果')}`;

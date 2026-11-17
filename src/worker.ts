@@ -16,7 +16,7 @@ import { Wakeup } from './wakeup.js';
 
 // File identity/metadata still guards sending via configKey. Only business
 // changes may reschedule work: reopening a panel can reapply Windows ACLs.
-function schedulingKey(state: State): string {
+export function schedulingKey(state: State): string {
   const { model, timezone, start, end, pollMinutes } = state.settings;
   return JSON.stringify([model, timezone, start, end, pollMinutes, state.enabled]);
 }
@@ -39,12 +39,12 @@ export class Worker {
           s.generation !== before.generation || s.configKey !== before.configKey ||
           !allows(s.settings, now()) || decide(s.settings, usage, now()).kind !== 'send') return;
       if (retry && (s.hold?.task?.attempts !== 1 || s.hold.task.confirmAt === null ||
-          s.hold.task.confirmAt > now() || s.hold.task.generation !== s.generation || s.hold.task.configKey !== s.configKey)) return;
+          s.hold.task.confirmAt > now() || s.hold.task.generation !== s.generation || s.hold.task.configKey !== schedulingKey(s))) return;
       if (!retry && s.hold) return;
       // Reserve the entire send slot before POST. A crash cannot reset the
       // budget or reuse an overdue confirmation deadline during an in-flight send.
       s.hold = { at: before.hold?.at ?? now(), model: s.settings.model, task: {
-        attempts: retry ? 2 : 1, confirmAt: null, generation: s.generation, configKey: s.configKey,
+        attempts: retry ? 2 : 1, confirmAt: null, generation: s.generation, configKey: schedulingKey(s),
       } };
       reserved = s.hold;
       s.status.nextRefresh = null; s.status.busy = '执行开窗指令';
@@ -63,7 +63,7 @@ export class Worker {
     await this.store.update(s => {
       if (!sameHold(s.hold, reserved)) return;
       if (!this.stopping && this.allowed() && s.enabled && !s.stop &&
-          s.generation === before.generation && s.configKey === before.configKey) {
+          s.generation === before.generation && schedulingKey(s) === schedulingKey(before)) {
         s.hold!.task!.confirmAt = finished + 30;
         event(s, failure ? `${failure}；30 秒后确认` : '开窗指令已完成，30 秒后确认');
       } else event(s, '开窗指令已结束，后续执行已取消');
@@ -82,7 +82,7 @@ export class Worker {
         !this.stopping && this.allowed() && s.enabled && !s.stop && !s.hold &&
         s.generation === before.generation && schedulingKey(s) === schedulingKey(before);
       if (!retain && s.status.nextRefresh === previous) s.status.nextRefresh = null;
-      if (s.hold?.task && (s.hold.task.generation !== s.generation || s.hold.task.configKey !== s.configKey)) s.hold.task.confirmAt = null;
+      if (s.hold?.task && (s.hold.task.generation !== s.generation || s.hold.task.configKey !== schedulingKey(s))) s.hold.task.confirmAt = null;
       event(s, retain ? '配置已变动，保留开窗计划' : '状态已变更，本次不开窗');
     };
     await this.store.update(s => { s.status.stale = true; s.status.busy = '查询额度'; });
@@ -136,7 +136,7 @@ export class Worker {
       if (hold) {
         const task = hold.task;
         if (eligible && task?.confirmAt !== null && task?.confirmAt !== undefined && queryStarted >= task.confirmAt) {
-          if (task.attempts === 1 && task.generation === current.generation && task.configKey === current.configKey &&
+          if (task.attempts === 1 && task.generation === current.generation && task.configKey === schedulingKey(current) &&
               hold.model === settings.model && decision.kind === 'send') {
             await this.send(before, usage, true); return;
           }
@@ -239,7 +239,7 @@ export class Worker {
             continue;
           }
           const task = s.hold?.task;
-          if (task?.confirmAt != null && (!s.enabled || task.generation !== s.generation || task.configKey !== s.configKey || s.hold!.model !== s.settings.model)) {
+          if (task?.confirmAt != null && (!s.enabled || task.generation !== s.generation || task.configKey !== schedulingKey(s) || s.hold!.model !== s.settings.model)) {
             await this.store.updateRuntime(current => { if (sameHold(current.hold, s.hold)) current.hold!.task!.confirmAt = null; });
             continue;
           }

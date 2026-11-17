@@ -31,6 +31,8 @@ export interface OpeningTask {
   attempts: 1 | 2;
   confirmAt: number | null;
   generation: number;
+  // Task intent uses business configuration, not file metadata; every POST
+  // still requires a fresh, unchanged metadata-sensitive State.configKey.
   configKey: string;
 }
 export interface OpeningHold { at: number; model: string; task?: OpeningTask }
@@ -214,13 +216,23 @@ export function tryLock(path: string): (() => void) | null {
 }
 export async function lock(path: string, timeoutMs = 30_000, signal?: AbortSignal): Promise<() => void> {
   const deadline = Date.now() + timeoutMs;
+  let accessFailure: unknown;
   do {
     signal?.throwIfAborted();
     try { const release = tryLock(path); if (release) return release; }
-    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+    catch (e) {
+      const error = e as NodeJS.ErrnoException;
+      if (error.code !== 'ENOENT') {
+        // An unreadable owner is unknown, never dead. Windows may briefly
+        // refuse opening a live lock; wait within the existing deadline only.
+        if (process.platform !== 'win32' || error.path !== path || error.syscall !== 'open' ||
+            !['EPERM', 'EACCES', 'EBUSY'].includes(error.code ?? '')) throw e;
+        accessFailure = e;
+      }
+    }
     await delay(25, undefined, { signal });
   } while (Date.now() < deadline);
-  throw new Error('本地操作忙或锁文件异常，请稍后重试');
+  throw new Error('本地操作忙或锁文件异常，请稍后重试', { cause: accessFailure });
 }
 export class Store {
   readonly home: string;
