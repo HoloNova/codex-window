@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { allows, nextPoll, decide } from '../dist/schedule.js';
+import { active, allows, nextPoll, decide } from '../dist/schedule.js';
 import { defaults as deviceDefaults, validateSettings } from '../dist/state.js';
 import { parseUsage } from '../dist/api.js';
 import { wireUsage } from './helpers.mjs';
@@ -11,15 +11,22 @@ const settings = { ...defaults, model: 'test-model', start: '00:00', end: '00:00
 const usage = remaining => parseUsage(wireUsage({ idle: false, remaining, at }), at);
 const ts = date => Math.floor(Date.parse(date) / 1000);
 
-test('only the near-reset horizon creates a single reset+90 task', () => {
+test('only the near-reset horizon creates a single reset+30 task', () => {
   assert.equal(decide(settings, usage(31 * 60), at).kind, 'wait');
-  assert.deepEqual(decide(settings, usage(30 * 60), at), { kind: 'schedule', at: at + 1890 });
-  assert.equal(decide(settings, usage(17990), at).kind, 'wait');
+  assert.deepEqual(decide(settings, usage(30 * 60), at), { kind: 'schedule', at: at + 1830 });
+  assert.equal(decide(settings, usage(17989), at).kind, 'wait');
 });
-test('zero percent is not idle when a window is already running', () => {
-  const raw = wireUsage({ idle: false, used: 0, remaining: 17999, at });
-  assert.equal(decide(settings, parseUsage(raw, at), at).kind, 'wait');
-  assert.equal(decide(settings, parseUsage(wireUsage({ at }), at), at).kind, 'send');
+test('idle detection uses the inclusive five-hour ±10-second band, not rounded usage', () => {
+  for (const remaining of [17990, 17999, 18000, 18010]) {
+    const u = parseUsage(wireUsage({ idle: false, used: 10, remaining, at }), at);
+    assert.equal(decide(settings, u, at).kind, 'send');
+    assert.equal(active(u, at), false);
+  }
+  for (const remaining of [17989, 18011, 0]) {
+    const u = parseUsage(wireUsage({ used: 0, remaining, at }), at);
+    assert.equal(decide(settings, u, at).kind, 'wait');
+    assert.equal(active(u, at), remaining === 17989);
+  }
 });
 test('unknown, exhausted, stale, inconsistent, or restricted data cannot send', () => {
   const raw = wireUsage({ at });

@@ -6,7 +6,7 @@ import { applicationCommand } from './runtime.js';
 import { ApplicationSession, applicationControl, hasRegisteredWorker, prepareApplication } from './application.js';
 import { translate } from './i18n.js';
 import { event, lock, now, tryLock } from './state.js';
-import type { State, Store } from './state.js';
+import type { OpeningHold, State, Store, Usage } from './state.js';
 import { active, allows, decide, nextPoll } from './schedule.js';
 import { Auth } from './auth.js';
 import { Api } from './api.js';
@@ -21,6 +21,8 @@ function schedulingKey(state: State): string {
   return JSON.stringify([model, timezone, start, end, pollMinutes, state.enabled]);
 }
 export const errorMessage = (error: unknown): string => translate(error instanceof Error ? error.message : '操作失败');
+const sameHold = (a: OpeningHold | null, b: OpeningHold | null): boolean => JSON.stringify(a) === JSON.stringify(b);
+const confirmationAt = (s: State): number => s.hold?.task?.confirmAt ?? Infinity;
 export class Worker {
   private stopping = false;
   private readAbort = new AbortController();
@@ -28,65 +30,142 @@ export class Worker {
   constructor(readonly store: Store, readonly api = new Api(new Auth(store)), readonly allowed: () => boolean = () => true, readonly controlHome = store.home) {}
   shutdown(): void { this.stopping = true; this.readAbort.abort(); this.wakeup?.notify(); }
   private mayRead(): boolean { return !this.stopping && this.allowed() && !this.store.read().stop; }
+  private async send(before: State, usage: Usage, retry = false): Promise<void> {
+    const credential = this.api.auth.load();
+    if (!credential || credential.needsLogin || credential.expiresAt <= now()) throw new Error('凭证已失效，请重新查询');
+    let reserved: OpeningHold | null = null;
+    await this.store.update(s => {
+      if (this.stopping || !this.allowed() || !s.enabled || s.stop || !sameHold(s.hold, before.hold) ||
+          s.generation !== before.generation || s.configKey !== before.configKey ||
+          !allows(s.settings, now()) || decide(s.settings, usage, now()).kind !== 'send') return;
+      if (retry && (s.hold?.task?.attempts !== 1 || s.hold.task.confirmAt === null ||
+          s.hold.task.confirmAt > now() || s.hold.task.generation !== s.generation || s.hold.task.configKey !== s.configKey)) return;
+      if (!retry && s.hold) return;
+      // Reserve the entire send slot before POST. A crash cannot reset the
+      // budget or reuse an overdue confirmation deadline during an in-flight send.
+      s.hold = { at: before.hold?.at ?? now(), model: s.settings.model, task: {
+        attempts: retry ? 2 : 1, confirmAt: null, generation: s.generation, configKey: s.configKey,
+      } };
+      reserved = s.hold;
+      s.status.nextRefresh = null; s.status.busy = '执行开窗指令';
+      event(s, retry ? '尚未开窗，补发一次' : '执行开窗指令');
+    });
+    const gate = this.store.read();
+    if (!reserved || this.stopping || !this.allowed() || !gate.enabled || gate.stop ||
+        !sameHold(gate.hold, reserved) || gate.generation !== before.generation ||
+        gate.configKey !== before.configKey || !allows(gate.settings, now())) {
+      await this.store.updateRuntime(s => { event(s, '条件已变化，本次不开窗'); }); return;
+    }
+    let failure = '';
+    try { await this.api.sendHello(credential, before.settings.model); }
+    catch (e) { failure = errorMessage(e); }
+    const finished = now();
+    await this.store.update(s => {
+      if (!sameHold(s.hold, reserved)) return;
+      if (!this.stopping && this.allowed() && s.enabled && !s.stop &&
+          s.generation === before.generation && s.configKey === before.configKey) {
+        s.hold!.task!.confirmAt = finished + 30;
+        event(s, failure ? `${failure}；30 秒后确认` : '开窗指令已完成，30 秒后确认');
+      } else event(s, '开窗指令已结束，后续执行已取消');
+    });
+  }
   async cycle(checkOnly = false): Promise<void> {
     if (this.stopping || !this.allowed()) return;
     const before = this.store.read();
     if (before.stop) return;
     this.readAbort = new AbortController();
     const settings = before.settings;
-    const planned = !checkOnly && before.enabled && !before.hold && !!settings.model && before.status.nextRefresh !== null && before.status.nextRefresh <= now();
+    const planned = !checkOnly && before.enabled && !before.hold && before.status.nextRefresh !== null && before.status.nextRefresh <= now();
     const recordControlChange = (s: State): void => {
       const previous = before.status.nextRefresh;
-      // Preserve an existing future decision, never retry the due send whose
-      // authorization was invalidated. That decision will fetch fresh usage.
       const retain = !planned && before.enabled && !before.hold && !!settings.model && previous !== null &&
         !this.stopping && this.allowed() && s.enabled && !s.stop && !s.hold &&
-        s.generation === before.generation && schedulingKey(s) === schedulingKey(before) &&
-        (s.status.nextRefresh === null || s.status.nextRefresh === previous);
-      if (retain) s.status.nextRefresh = previous;
+        s.generation === before.generation && schedulingKey(s) === schedulingKey(before);
+      if (!retain && s.status.nextRefresh === previous) s.status.nextRefresh = null;
+      if (s.hold?.task && (s.hold.task.generation !== s.generation || s.hold.task.configKey !== s.configKey)) s.hold.task.confirmAt = null;
       event(s, retain ? '配置已变动，保留开窗计划' : '状态已变更，本次不开窗');
     };
-    await this.store.update(s => {
-      s.status.nextRefresh = null; s.status.stale = true; s.status.busy = '查询额度';
-      event(s, checkOnly ? '手动查询额度' : planned ? '开窗前检查额度' : '自动查询额度');
-    });
-    let release: (() => void) | null = null;
+    await this.store.update(s => { s.status.stale = true; s.status.busy = '查询额度'; });
+    let release: (() => void) | null = null, queryStarted = 0, queried = false;
     try {
       release = await lock(join(this.store.home, 'account.lock'), 120_000, this.readAbort.signal);
-      const usage = await this.api.usage(this.readAbort.signal, () => this.mayRead());
-      const decision = decide(settings, usage, now());
-      await this.store.update(s => {
-        s.status.usage = usage; s.status.stale = false;
-        if (active(usage, now())) s.hold = null;
-      });
-      if (checkOnly) {
-        await this.store.update(s => {
-          // A read-only check changes usage, not the opening decision. Keep a
-          // future plan, but never restore a plan that is already due: that
-          // would turn a manual read into an automatic send on the next loop.
-          const previous = before.status.nextRefresh;
-          const retain = previous !== null && previous > now() && s.status.nextRefresh === null &&
-            s.enabled && !s.stop && !s.hold && !this.stopping && this.allowed() &&
-            s.generation === before.generation && schedulingKey(s) === schedulingKey(before);
-          if (retain) s.status.nextRefresh = previous;
-          event(s, retain ? '只读查询完成，保留开窗计划' : '只读查询完成');
-        }); return;
+      queryStarted = now();
+      let usage: Usage;
+      try { usage = await this.api.usage(this.readAbort.signal, () => this.mayRead()); }
+      finally {
+        queried = true;
+        const completed = now();
+        let due: number | null = null;
+        try {
+          const latest = this.store.read();
+          due = latest.generation === before.generation && schedulingKey(latest) === schedulingKey(before) ? nextPoll(latest.settings, completed) : completed;
+        } catch { /* Invalid configuration remains blocked until repaired. */ }
+        // This clock belongs to the query, not to a later send or confirmation.
+        await this.store.updateRuntime(s => { s.status.nextPoll = due; });
       }
+      const decision = decide(settings, usage, now());
+      await this.store.update(s => { s.status.usage = usage; s.status.stale = false; });
       const current = this.store.read();
       if (current.generation !== before.generation || current.configKey !== before.configKey) {
         await this.store.update(recordControlChange); return;
       }
+      const hold = current.hold;
+      const eligible = hold && sameHold(hold, before.hold) && queryStarted >= hold.at &&
+        (hold.task?.confirmAt == null || queryStarted >= hold.task.confirmAt);
+      if (eligible && active(usage, now())) {
+        await this.store.update(s => {
+          if (sameHold(s.hold, hold)) { s.hold = null; s.status.nextRefresh = null; event(s, '已确认开窗'); }
+        }); return;
+      }
+      if (checkOnly) {
+        await this.store.update(s => {
+          // Manual reads never create a send or consume an independent timer,
+          // even if that timer becomes due during the read. Only a validated
+          // superseding active window invalidates the old reset plan.
+          const previous = before.status.nextRefresh;
+          const retain = previous !== null && s.enabled && !s.stop && !s.hold &&
+            (!active(usage, now()) || usage.primary.resetAt <= previous + 10) &&
+            s.generation === before.generation && schedulingKey(s) === schedulingKey(before);
+          s.status.nextRefresh = retain ? previous : null;
+          event(s, retain ? '只读查询完成，保留开窗计划' : previous !== null ? '只读查询完成，开窗计划已取消' : '只读查询完成');
+        }); return;
+      }
       if (!current.enabled || current.stop || this.stopping || !this.allowed()) {
         await this.store.update(s => { event(s, '查询完成，自动开窗已暂停'); }); return;
       }
-      if (current.hold) { await this.store.update(s => { event(s, '开窗结果待确认，不自动重试'); }); return; }
+      if (hold) {
+        const task = hold.task;
+        if (eligible && task?.confirmAt !== null && task?.confirmAt !== undefined && queryStarted >= task.confirmAt) {
+          if (task.attempts === 1 && task.generation === current.generation && task.configKey === current.configKey &&
+              hold.model === settings.model && decision.kind === 'send') {
+            await this.send(before, usage, true); return;
+          }
+          await this.store.update(s => {
+            if (sameHold(s.hold, hold)) {
+              s.hold!.task!.confirmAt = null;
+              event(s, decision.kind === 'wait' ? `开窗未确认，已停止补发：${decision.reason}` : '开窗未确认，已停止补发');
+            }
+          });
+        } else await this.store.update(s => { event(s, task?.confirmAt != null ? '查询完成，等待开窗确认' : '查询完成，开窗结果仍待确认'); });
+        return;
+      }
       if (!settings.model) { await this.store.update(s => { event(s, '请先选择模型'); }); return; }
-      if (decision.kind === 'wait') { await this.store.update(s => { event(s, `本次不开窗：${decision.reason}`); }); return; }
+      const previous = before.status.nextRefresh;
+      if (previous !== null && queryStarted < previous && decision.kind !== 'schedule' &&
+          (!active(usage, now()) || usage.primary.resetAt <= previous + 10)) {
+        // A regular read cannot bypass the reset+30 grace period, nor turn a
+        // pre-deadline observation into the fresh check required at that time.
+        await this.store.update(s => {
+          if (s.enabled && !s.stop && !s.hold && s.generation === before.generation && s.configKey === before.configKey) {
+            s.status.nextRefresh = previous; event(s, '查询完成，保留开窗计划');
+          } else recordControlChange(s);
+        }); return;
+      }
       if (decision.kind === 'schedule') {
         await this.store.update(s => {
-          if (s.enabled && !s.stop && s.generation === before.generation && s.configKey === before.configKey) {
+          if (s.enabled && !s.stop && !s.hold && s.generation === before.generation && s.configKey === before.configKey) {
             s.status.nextRefresh = decision.at;
-            if (before.status.nextRefresh === decision.at) event(s, '查询完成，开窗计划不变');
+            if (before.status.nextRefresh === decision.at) event(s, '自动查询完成，窗口进行中');
             else {
               const at = new Intl.DateTimeFormat('en-GB', { timeZone: settings.timezone, dateStyle: 'short', timeStyle: 'medium', hourCycle: 'h23' }).format(decision.at * 1000);
               event(s, `计划开窗：${at} (${settings.timezone})`);
@@ -94,57 +173,29 @@ export class Worker {
           } else recordControlChange(s);
         }); return;
       }
-      const credential = this.api.auth.load();
-      if (!credential || credential.needsLogin || credential.expiresAt <= now()) throw new Error('凭证已失效，请重新查询');
-      let permitted = false;
-      await this.store.update(s => {
-        if (!this.stopping && this.allowed() && s.enabled && !s.stop && !s.hold && s.generation === before.generation && s.configKey === before.configKey && allows(s.settings, now()) && now() - usage.fetchedAt <= 120) {
-          s.hold = { at: now(), model: settings.model };
-          s.status.busy = '执行开窗指令';
-          event(s, '执行开窗指令');
-          permitted = true;
-        }
-      });
-      const gate = this.store.read();
-      if (!permitted || this.stopping || !this.allowed() || !gate.enabled || gate.stop || gate.generation !== before.generation || gate.configKey !== before.configKey || !allows(gate.settings, now())) {
-        await this.store.updateRuntime(s => { event(s, '条件已变化，本次不开窗'); }); return;
+      await this.store.update(s => { s.status.nextRefresh = null; });
+      if (decision.kind === 'wait') {
+        await this.store.update(s => { event(s, `${planned ? '重置后查询' : before.status.nextRefresh !== null ? '开窗计划已取消' : '自动查询完成'}：${decision.reason}`); }); return;
       }
-      try {
-        await this.api.sendHello(credential, settings.model);
-        await this.store.update(s => { event(s, '开窗指令已完成，正在确认结果'); });
-      } catch (e) {
-        await this.store.update(s => { event(s, `${errorMessage(e)}；不自动重试，正在确认结果`); });
-      }
-      if (this.stopping || !this.allowed() || this.store.read().stop) return;
-      await this.store.update(s => { s.status.busy = '确认开窗结果'; });
-      try {
-        const observed = await this.api.usage(this.readAbort.signal, () => this.mayRead());
-        await this.store.update(s => {
-          s.status.usage = observed; s.status.stale = false;
-          if (active(observed, now())) { s.hold = null; event(s, '已确认开窗'); }
-          else event(s, '开窗尚未确认，不自动重试');
-        });
-      } catch (e) {
-        await this.store.updateRuntime(s => { s.status.stale = true; event(s, `${errorMessage(e)}；开窗未确认，不自动重试`); });
-      }
+      await this.send(before, usage);
     } catch (e) {
       const cancelled = this.stopping && this.readAbort.signal.aborted;
       await this.store.updateRuntime(s => {
-        s.status.stale = true; s.status.nextRefresh = null;
+        s.status.stale = true;
+        if (!checkOnly && s.generation === before.generation && s.status.nextRefresh !== null &&
+            s.status.nextRefresh === before.status.nextRefresh &&
+            (queryStarted >= s.status.nextRefresh || (queryStarted === 0 && planned))) s.status.nextRefresh = null;
+        if (!checkOnly && sameHold(s.hold, before.hold) && s.hold?.task?.confirmAt != null && queryStarted >= s.hold.task.confirmAt) s.hold.task.confirmAt = null;
         const message = errorMessage(e);
         const marked = /失败|错误|超时|无效|失效|拒绝|不支持|取消|fail|error|timeout|invalid|expired|denied|unsupported/i.test(message);
         event(s, cancelled ? '额度查询已取消' : marked ? message : `失败：${message}`);
       });
     } finally {
       release?.();
-      let due: number | null = null;
-      try {
-        const latest = this.store.read();
-        due = latest.generation === before.generation && schedulingKey(latest) === schedulingKey(before) ? nextPoll(latest.settings, now()) : now();
-      } catch { /* Invalid configuration remains blocked until it is repaired. */ }
       await this.store.updateRuntime(s => {
         s.status.busy = ''; s.status.heartbeat = now();
-        s.checked = Math.max(s.checked, before.check); s.status.nextPoll = due;
+        s.checked = Math.max(s.checked, before.check);
+        if (!queried) s.status.nextPoll = nextPoll(settings, now());
       });
     }
   }
@@ -187,12 +238,17 @@ export class Worker {
             await this.store.updateRuntime(current => { current.status.nextPoll = now(); current.status.nextRefresh = null; });
             continue;
           }
+          const task = s.hold?.task;
+          if (task?.confirmAt != null && (!s.enabled || task.generation !== s.generation || task.configKey !== s.configKey || s.hold!.model !== s.settings.model)) {
+            await this.store.updateRuntime(current => { if (sameHold(current.hold, s.hold)) current.hold!.task!.confirmAt = null; });
+            continue;
+          }
           const checkOnly = s.check !== s.checked;
-          if (checkOnly || (s.status.nextPoll ?? 0) <= now() || (s.enabled && s.status.nextRefresh !== null && s.status.nextRefresh <= now())) {
+          if (checkOnly || (s.status.nextPoll ?? 0) <= now() || (s.enabled && ((s.status.nextRefresh !== null && s.status.nextRefresh <= now()) || confirmationAt(s) <= now()))) {
             await this.cycle(checkOnly); continue;
           }
           if (now() - published >= 30) { await this.store.updateRuntime(current => { current.status.heartbeat = now(); }); published = now(); }
-          const due = Math.min(s.status.nextPoll ?? now() + 30, s.enabled ? s.status.nextRefresh ?? Infinity : Infinity, published + 30);
+          const due = Math.min(s.status.nextPoll ?? now() + 30, s.enabled ? s.status.nextRefresh ?? Infinity : Infinity, s.enabled ? confirmationAt(s) : Infinity, published + 30);
           await wakeup.wait(Math.max(1, due * 1000 - Date.now()));
         } catch (e) {
           settingsKey = ''; // A repaired configuration gets a fresh check, even if its values are unchanged.

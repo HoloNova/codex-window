@@ -279,7 +279,9 @@ test('one account can send while another is blocked; pending send markers remain
     assert.equal(f.calls.filter(call => call.path === '/responses').length, 1);
     assert.equal(f.calls.find(call => call.path === '/responses').headers['chatgpt-account-id'], 'second-account');
     assert.equal(f.calls.find(call => call.path === '/responses').headers.authorization, `Bearer ${new Auth(f.second).load().accessToken}`);
-    assert.equal(f.store.read().hold, null); assert.equal(f.second.read().hold, null);
+    assert.equal(f.store.read().hold, null);
+    assert.equal(f.second.read().hold.task.attempts, 1);
+    assert(f.second.read().hold.task.confirmAt >= now(), 'only the second account awaits its delayed confirmation');
   } finally { release(); pool.shutdown(); await running; }
 });
 test('global stop drains a rotating credential and never starts a follow-up request for that account', async t => {

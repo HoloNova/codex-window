@@ -20,8 +20,8 @@ export function nextPoll(settings: Settings, after: number): number {
   // wall-clock slot. Startup and manual checks therefore move the cadence.
   return after + settings.pollMinutes * 60;
 }
-export const idle = (window: WindowUsage): boolean => window.used === 0 && window.remaining >= window.duration;
-export const active = (usage: Usage, at: number): boolean => observationProblem(usage, at) === null && !idle(usage.primary) && usage.primary.resetAt > at;
+export const idle = (window: WindowUsage, at: number): boolean => Math.abs(window.resetAt - at - 18000) <= 10;
+export const active = (usage: Usage, at: number): boolean => observationProblem(usage, at) === null && usage.primary.resetAt > at && usage.primary.resetAt - at < 17990;
 function observationProblem(usage: Usage, at: number): string | null {
   if (at < usage.fetchedAt || at - usage.fetchedAt > 120) return '额度数据已过期，等待重新查询';
   const p = usage.primary, w = usage.weekly;
@@ -36,13 +36,13 @@ export function decide(settings: Settings, usage: Usage, at: number): Decision {
   if (problem) return wait(problem);
   const p = usage.primary, w = usage.weekly;
   if (w.used >= 100) return wait('周额度已用完');
-  if (idle(p)) {
+  if (idle(p, at)) {
     if (!usage.allowed || usage.limited || p.used >= 100) return wait('账号额度受限');
     return allows(settings, at) ? { kind: 'send' } : wait('不在允许发送时段');
   }
   const remaining = p.resetAt - at;
-  if (remaining <= 0) return wait('等待服务端更新重置后的额度');
+  if (remaining <= 0 || remaining > 18010) return wait('等待服务端更新重置后的额度');
   if (remaining > settings.pollMinutes * 60) return wait('窗口进行中，距重置还早');
-  const target = p.resetAt + 90;
+  const target = p.resetAt + 30;
   return allows(settings, target) ? { kind: 'schedule', at: target } : wait('重置后不在允许发送时段');
 }

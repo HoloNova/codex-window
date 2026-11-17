@@ -27,6 +27,13 @@ export interface Usage {
   primary: WindowUsage;
   weekly: WindowUsage;
 }
+export interface OpeningTask {
+  attempts: 1 | 2;
+  confirmAt: number | null;
+  generation: number;
+  configKey: string;
+}
+export interface OpeningHold { at: number; model: string; task?: OpeningTask }
 export interface State {
   app: 'codex-window-node';
   version: 1 | 2;
@@ -37,7 +44,7 @@ export interface State {
   generation: number;
   check: number;
   checked: number;
-  hold: { at: number; model: string } | null;
+  hold: OpeningHold | null;
   status: {
     heartbeat: number;
     nextPoll: number | null;
@@ -97,7 +104,16 @@ function validateRuntime(value: unknown): RuntimeState {
   const s = object(value);
   if (s.app !== 'codex-window-node' || s.version !== 2 || 'settings' in s || 'enabled' in s || typeof s.stop !== 'boolean') throw new Error('状态文件无效，已禁止发送');
   for (const key of ['generation', 'check', 'checked']) integer(s[key]);
-  if (s.hold !== null) { const h = object(s.hold); integer(h.at, 1); text(h.model); }
+  if (s.hold !== null) {
+    const h = object(s.hold); integer(h.at, 1); text(h.model);
+    // Old pending outcomes have no task and must never acquire a retry budget.
+    if (h.task !== undefined) {
+      const task = object(h.task);
+      if (task.attempts !== 1 && task.attempts !== 2) throw new Error('开窗次数无效');
+      if (task.confirmAt !== null) integer(task.confirmAt, 1);
+      integer(task.generation); text(task.configKey);
+    }
+  }
   const status = object(s.status);
   integer(status.heartbeat);
   for (const key of ['nextPoll', 'nextRefresh']) if (status[key] !== null) integer(status[key], 1);
@@ -132,6 +148,7 @@ export function pause(state: State): void {
   state.enabled = false;
   state.generation++;
   state.status.nextRefresh = null;
+  if (state.hold?.task) state.hold.task.confirmAt = null;
 }
 export function atomicJson(path: string, value: unknown): void {
   const temporary = join(dirname(path), `.${randomUUID()}.tmp`);

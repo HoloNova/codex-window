@@ -12,9 +12,9 @@ import { english, translate } from '../dist/i18n.js';
 import { fixture, wireUsage, json, completed } from './helpers.mjs';
 
 async function until(check, timeout = 4000) {
-  const end = Date.now() + timeout;
+  const end = performance.now() + timeout;
   while (!check()) {
-    if (Date.now() > end) throw new Error('Timed out waiting for automation');
+    if (performance.now() > end) throw new Error('Timed out waiting for automation');
     await delay(10);
   }
 }
@@ -63,8 +63,9 @@ test('warm startup and metadata-only configuration changes preserve requests, ca
   } finally { pool.shutdown(); await running; }
 });
 
-test('manual read-only checks preserve future opening plans but drop due plans without sending', async t => {
-  const f = await fixture(t, (_call, response) => json(response, wireUsage({ idle: false, remaining: 60 })));
+test('manual read-only checks preserve future and due independent opening plans without sending', async t => {
+  let idle = false;
+  const f = await fixture(t, (_call, response) => json(response, idle ? wireUsage() : wireUsage({ idle: false, remaining: 60 })));
   await resume(f.store, f.auth);
   const worker = new Worker(f.store, f.api);
   await worker.cycle();
@@ -73,29 +74,32 @@ test('manual read-only checks preserve future opening plans but drop due plans w
   await worker.cycle(true);
   assert.equal(f.store.read().status.nextRefresh, plan);
   assert.match(events(f.store), /opening plan retained/);
-  await f.store.updateRuntime(s => { s.status.nextRefresh = now() - 1; });
+  const due = now() - 1;
+  await f.store.updateRuntime(s => { s.status.nextRefresh = due; });
+  idle = true;
   await worker.cycle(true);
-  assert.equal(f.store.read().status.nextRefresh, null);
+  assert.equal(f.store.read().status.nextRefresh, due);
   assert.equal(f.calls.filter(call => call.method === 'POST').length, 0);
   assert.equal(f.calls.length, 3);
 });
 
-test('manual checks evaluate plan freshness at completion, not at start', async t => {
+test('a manual read crossing an opening deadline does not cancel that independent task', async t => {
   let clock = Date.now();
   t.mock.method(Date, 'now', () => clock);
   let arrived, reply;
   const entered = new Promise(resolve => { arrived = resolve; });
   const gate = new Promise(resolve => { reply = resolve; });
-  const f = await fixture(t, async (_call, response) => { arrived(); await gate; json(response, wireUsage({ idle: false, remaining: 60 })); });
+  const f = await fixture(t, async (_call, response) => { arrived(); await gate; json(response, wireUsage()); });
   await resume(f.store, f.auth);
-  await f.store.updateRuntime(s => { s.status.nextRefresh = now() + 60; });
+  const deadline = now() + 60;
+  await f.store.updateRuntime(s => { s.status.nextRefresh = deadline; });
   const worker = new Worker(f.store, f.api);
   const checking = worker.cycle(true);
   await entered;
   clock += 120_000; // The plan was future at the start and is due at completion.
   reply();
   await checking;
-  assert.equal(f.store.read().status.nextRefresh, null);
+  assert.equal(f.store.read().status.nextRefresh, deadline);
   assert.equal(f.calls.filter(call => call.method === 'POST').length, 0);
   assert.equal(f.calls.length, 1);
 });
@@ -236,9 +240,9 @@ test('automatic checks log a timestamped plan once and keep runtime writes out o
   const raw = readFileSync(f.store.configPath, 'utf8'), key = f.store.read().configKey;
   const worker = new Worker(f.store, f.api);
   await worker.cycle();
-  const target = at + 25 * 60 + 90;
+  const target = at + 25 * 60 + 30;
   assert.equal(f.store.read().status.nextRefresh, target);
-  assert.match(events(f.store), /Automatic usage check/);
+  assert.equal(f.store.read().status.events.length, 2, 'enable plus one query result, without a query-start log');
   assert.match(events(f.store), /Opening scheduled:/);
   assert(events(f.store).includes(clock('UTC').format(target * 1000)));
   assert.match(events(f.store), /UTC/);
@@ -250,7 +254,8 @@ test('automatic checks log a timestamped plan once and keep runtime writes out o
   assert.equal(f.store.read().configKey, key);
 });
 
-test('a due opening checks fresh usage before exactly one send and logs its activation', async t => {
+test('a due opening checks fresh usage, sends once, then the separate timer confirms after 30 seconds', async t => {
+  let time = Date.now(); t.mock.method(Date, 'now', () => time);
   let reads = 0;
   const f = await fixture(t, (call, response) => {
     if (call.path === '/responses') response.writeHead(200).end(completed);
@@ -265,17 +270,23 @@ test('a due opening checks fresh usage before exactly one send and logs its acti
     await until(() => f.store.read().status.nextRefresh && !f.store.read().status.busy);
     // Use the real due timer, without waiting for a production-length window.
     await f.store.updateRuntime(s => { s.status.nextRefresh = now() + 1; });
+    time += 1000;
+    await f.store.updateRuntime(s => { s.status.heartbeat = now(); });
+    await until(() => f.calls.length === 3 && !f.store.read().status.busy);
+    assert.equal(f.store.read().hold.task.confirmAt, now() + 30);
+    time += 30_000;
+    await f.store.updateRuntime(s => { s.status.heartbeat = now(); });
     await until(() => f.calls.length === 4 && !f.store.read().status.busy);
     assert.deepEqual(f.calls.map(call => call.method), ['GET', 'GET', 'POST', 'GET']);
-    assert.match(events(f.store), /Checking usage before opening/);
-    assert.match(events(f.store), /Opening command completed; confirming result/);
+    assert.match(events(f.store), /Executing opening command/);
+    assert.match(events(f.store), /Opening command completed; checking in 30 seconds/);
     assert.match(events(f.store), /Window opening confirmed/);
     assert.equal(f.store.read().hold, null);
   } finally { worker.shutdown(); await running; }
 });
 
 test('coincident due poll and opening share one check rather than duplicate requests', async t => {
-  const f = await fixture(t, (_call, response) => json(response, wireUsage({ idle: false, remaining: 17999 })));
+  const f = await fixture(t, (_call, response) => json(response, wireUsage({ idle: false, remaining: 17970 })));
   const worker = new Worker(f.store, f.api), running = worker.run();
   try {
     await until(() => f.calls.length === 1 && !f.store.read().status.busy);
@@ -285,22 +296,21 @@ test('coincident due poll and opening share one check rather than duplicate requ
     await until(() => f.calls.length === 3 && !f.store.read().status.busy);
     await delay(100);
     assert.equal(f.calls.length, 3);
-    assert.match(events(f.store), /Checking usage before opening/);
+    assert.match(events(f.store), /Post-reset check:/);
     assert(f.calls.every(call => call.method === 'GET'));
   } finally { worker.shutdown(); await running; }
 });
 
 test('a due plan logs a skip when another client already opened the window', async t => {
   let reads = 0;
-  const f = await fixture(t, (_call, response) => json(response, wireUsage({ idle: false, remaining: ++reads === 1 ? 60 : 17999 })));
+  const f = await fixture(t, (_call, response) => json(response, wireUsage({ idle: false, remaining: ++reads === 1 ? 60 : 17970 })));
   await resume(f.store, f.auth);
   const worker = new Worker(f.store, f.api);
   await worker.cycle();
   await f.store.updateRuntime(s => { s.status.nextRefresh = now() - 1; });
   await worker.cycle();
   assert.equal(f.store.read().status.nextRefresh, null);
-  assert.match(events(f.store), /Checking usage before opening/);
-  assert.match(events(f.store), /Opening skipped: Window is active/);
+  assert.match(events(f.store), /Post-reset check: Window is active/);
   assert.equal(f.calls.length, 2);
   assert(f.calls.every(call => call.method === 'GET'));
 });
@@ -322,7 +332,7 @@ test('failed planned checks log the error without sending or refreshing the cach
   assert(f.calls.every(call => call.method === 'GET'));
 });
 
-test('an uncertain planned send stays pending and subsequent automatic checks never resend', async t => {
+test('an uncertain planned send stays pending until its confirmation deadline, without premature resends', async t => {
   let reads = 0;
   const f = await fixture(t, (call, response) => {
     if (call.path === '/responses') response.writeHead(200).end('data: {"type":"response.created"}\n\n');
@@ -334,13 +344,13 @@ test('an uncertain planned send stays pending and subsequent automatic checks ne
   await f.store.updateRuntime(s => { s.status.nextRefresh = now() - 1; });
   await worker.cycle();
   assert(f.store.read().hold);
-  assert.match(events(f.store), /no automatic retry/);
-  assert.match(events(f.store), /Opening not confirmed/);
+  assert.match(events(f.store), /checking in 30 seconds/);
+  assert.equal(f.store.read().hold.task.attempts, 1);
   assert.doesNotMatch(events(f.store), /hello|pending marker|model-specific|in-flight/i);
   await worker.cycle();
   assert(f.store.read().hold);
   assert.equal(f.calls.filter(call => call.method === 'POST').length, 1);
-  assert.match(events(f.store), /Opening pending confirmation; no automatic retry/);
+  assert.match(events(f.store), /Usage checked; waiting for opening confirmation/);
 });
 
 test('malformed usage retains concise failure context without sending or updating successful usage', async t => {
@@ -359,8 +369,8 @@ test('manual checks remain read-only and new action events translate their neste
   const f = await fixture(t, (_call, response) => json(response, wireUsage()));
   await resume(f.store, f.auth);
   await new Worker(f.store, f.api).cycle(true);
-  assert.match(events(f.store), /Manual usage check/);
   assert.match(events(f.store), /Read-only check complete/);
+  assert.equal(f.store.read().status.events.length, 2, 'one enable and one result, no request/start duplicates');
   assert.equal(f.calls.length, 1);
   assert(f.calls.every(call => call.method === 'GET'));
   const message = '本次不开窗：周额度已用完';

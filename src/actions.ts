@@ -38,7 +38,7 @@ export async function resume(store: Store, auth: Auth, signal?: AbortSignal, gen
   } finally { release(); }
 }
 export async function check(store: Store): Promise<void> {
-  await store.update(s => { s.check++; event(s, '已请求只读查询'); });
+  await store.update(s => { s.check++; });
 }
 export async function stop(store: Store): Promise<void> {
   try { await store.update(s => { pause(s); s.stop = true; event(s, '正在停止后台…'); }); }

@@ -23,6 +23,7 @@ import { Preferences } from './preferences.js';
 import { ApplicationSession, applicationPermits } from './application.js';
 import { fetchLatestTag, isNewerVersion, RELEASES_URL } from './update.js';
 import { currentVersion, copyToClipboard, openExternal } from './runtime.js';
+import { logStyle } from './logging.js';
 const paint = (value: string, tone: Tone = 'normal', bold = false): string => color(tr(value), tone, bold);
 
 type AccountScreen = { kind: 'accounts'; items: AccountInfo[]; selected: number };
@@ -35,7 +36,7 @@ type Screen = { kind: 'home' } | AccountScreen | { kind: 'login'; selected: numb
   { kind: 'wait'; title: string; message: string; offset: number } |
   { kind: 'logs'; offset: number; follow: boolean };
 interface Job { controller: AbortController; back: Screen; mayEnable: boolean }
-interface Result { screen?: Screen; account?: string; message?: string; tone?: Tone }
+interface Result { screen?: Screen; account?: string; message?: string; tone?: Tone; log?: boolean }
 interface LogEntry { at: number; text: string; source: '后台' | '面板' }
 const fields: { key: keyof Settings; label: string; hint: string }[] = [
   { key: 'model', label: '模型 ID', hint: '使用主五小时额度池模型；也可返回主页按 M 从目录选择。' },
@@ -108,7 +109,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     return formatter!.format(at * 1000);
   };
   const logText = (entry: LogEntry): string => {
-    const tone = reasonTone(entry.text), level = tone === 'bad' ? '错误' : tone === 'warning' ? '注意' : '信息';
+    const { label: level } = logStyle(entry.text);
     return `${time(entry.at)}  ${tr(entry.source)}  ${tr(level)}  ${/[\u3400-\u9fff]/u.test(entry.text) ? entry.text : tr(entry.text)}`;
   };
   const appendLog = (entry: LogEntry): void => {
@@ -163,7 +164,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     logWidth = width;
     const key = `${logRevision}:${width}:${state?.settings.timezone}:${getLanguage()}`;
     if (key !== logCacheKey) {
-      logCache = logs.flatMap(e => reflow(logText(e).split(/\r?\n/).map(line => color(line, 'muted')), width));
+      logCache = logs.flatMap(e => reflow(logText(e).split(/\r?\n/).map(line => color(line, logStyle(e.text).tone)), width));
       logCacheKey = key;
     }
     return logCache;
@@ -193,7 +194,10 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     let statusText = '已暂停 · 仅查询额度', tone: Tone = 'muted';
     if (!identity) { statusText = '待登录'; tone = 'warning'; }
     else if (identity.needsLogin) { statusText = '需要重新登录'; tone = 'warning'; }
-    else if (state.hold) { statusText = '开窗待确认 · 不自动重试'; tone = 'warning'; }
+    else if (state.hold) {
+      statusText = state.hold.task?.confirmAt != null ? state.hold.task.attempts === 1 ? '开窗待确认 · 最多补发一次' : '开窗待确认 · 补发已用尽' : '开窗待确认 · 不自动重试';
+      tone = 'warning';
+    }
     else if (!running) statusText = '后台未运行';
     else if (stopping) statusText = '整个后台正在停止';
     else if (state.enabled) {
@@ -205,19 +209,24 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     // quota reset times. A paused/pending account still has read-only checks.
     const readOnly = !state.enabled || !!state.hold || !s.model;
     const poll = status.nextPoll ?? Infinity, opening = readOnly ? Infinity : status.nextRefresh ?? Infinity;
+    const task = state.hold?.task;
+    const confirming = state.enabled && task?.generation === state.generation && task.configKey === state.configKey ? task.confirmAt ?? Infinity : Infinity;
     const when = (at: number): string => at <= now() ? tr('等待执行') : time(at);
     const openingText = (): string => `${when(opening)} · ${tr('计划开窗（条件满足时执行）')}`;
+    const confirmationText = (): string => `${when(confirming)} · ${tr('确认开窗结果')}`;
     let nextText: string, nextTone: Tone = 'muted';
     if (!running) nextText = tr('后台未运行');
     else if (stopping) nextText = tr('整个后台正在停止');
     else if (!identity || identity.needsLogin) { nextText = tr(identity ? '需要重新登录' : '待登录'); nextTone = 'warning'; }
     else if (status.busy) { nextText = tr('处理中，完成后更新计划'); nextTone = 'wait'; }
     else if (state.check !== state.checked) { nextText = `${tr('等待执行')} · ${tr('手动只读查询额度')}`; nextTone = 'wait'; }
-    else if (Number.isFinite(poll) || Number.isFinite(opening)) {
-      if (opening <= poll) nextText = openingText();
+    else if (Number.isFinite(poll) || Number.isFinite(opening) || Number.isFinite(confirming)) {
+      if (confirming <= Math.min(poll, opening)) nextText = confirmationText();
+      else if (opening <= poll) nextText = openingText();
       else {
         nextText = `${when(poll)} · ${tr(readOnly ? '仅查询额度' : '定时查询额度')}`;
         if (Number.isFinite(opening)) nextText += ` / ${openingText()}`;
+        if (Number.isFinite(confirming)) nextText += ` / ${confirmationText()}`;
       }
       nextTone = readOnly ? 'muted' : 'wait';
     } else if (status.reason && reasonTone(status.reason) === 'bad') { nextText = tr(status.reason); nextTone = 'bad'; }
@@ -479,12 +488,12 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     });
   };
   const clearNotice = (): void => { notice = ''; clearTimeout(noticeTimer); };
-  const report = (message: string, tone: Tone = 'accent'): void => {
+  const report = (message: string, tone: Tone = 'accent', record = true): void => {
     message = english(message);
     clearNotice(); notice = message;
     noticeTone = tone === 'muted' || tone === 'normal' ? 'accent' : tone;
     if (message) {
-      appendLog({ at: now(), text: message, source: '面板' });
+      if (record) appendLog({ at: now(), text: message, source: '面板' });
       noticeTimer = setTimeout(() => { notice = ''; requestRender(); }, 3000);
     }
     requestRender();
@@ -516,7 +525,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
         if (userCode) {
           // Copy the human-facing code, never the OAuth polling identifier.
           void copyToClipboard(userCode).then(ok => {
-            if (active()) report(ok ? '设备码已复制到剪切板' : '无法复制设备码，请手动选择复制', ok ? 'good' : 'warning');
+            if (active()) report(ok ? '设备码已复制到剪切板' : '无法复制设备码，请手动选择复制', ok ? 'good' : 'warning', !ok);
           }, () => { if (active()) report('无法复制设备码，请手动选择复制', 'warning'); });
         }
         requestRender();
@@ -525,7 +534,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
       if (!active()) return;
       if (result.account) selectAccount(result.account);
       screen = result.screen ?? back;
-      if (result.message) report(result.message, result.tone ?? 'good');
+      if (result.message) report(result.message, result.tone ?? 'good', result.log ?? true);
     }).catch(e => {
       if (!active()) return;
       screen = back; report(errorMessage(e), 'bad');
@@ -540,13 +549,13 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     if (job) {
       const previous = job.back;
       job.controller.abort(); job = null; screen = previous;
-      report('已返回。');
+      report('已返回。', 'accent', false);
     } else if (screen.kind === 'edit' || screen.kind === 'timezones' || screen.kind === 'languages') {
-      screen = screen.parent; report('本项修改已放弃。');
+      screen = screen.parent; report('本项修改已放弃。', 'accent', false);
     } else if (screen.kind === 'login' && screen.parent) {
-      screen = screen.parent; report('已返回账号列表。');
+      screen = screen.parent; report('已返回账号列表。', 'accent', false);
     } else if (screen.kind !== 'home') {
-      screen = { kind: 'home' }; report('已返回主页。');
+      screen = { kind: 'home' }; report('已返回主页。', 'accent', false);
     }
   };
   const close = (): void => {
@@ -576,7 +585,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
     const target = store, id = accountId;
     if (job?.mayEnable) { const previous = job.back; job.controller.abort(); job = null; screen = previous; }
     const task = actions.interrupt(target).then(() => {
-      if (!closed && accountId === id) report('账号已暂停。');
+      if (!closed && accountId === id) report('账号已暂停。', 'accent', false);
     }).catch(e => { if (!closed && accountId === id) report(errorMessage(e), 'bad'); }).finally(() => { if (!closed) { refresh(true); requestRender(); } });
     track(task);
   };
@@ -587,7 +596,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
       try {
         const value = current.value.trim();
         current.parent.draft = validateSettings({ ...current.parent.draft, [current.field]: current.field === 'pollMinutes' ? Number(value) : value });
-        screen = current.parent; report('草稿已修改，选择“保存设置”后生效。');
+        screen = current.parent; report('草稿已修改，选择“保存设置”后生效。', 'accent', false);
       } catch (e) { report(errorMessage(e), 'bad'); }
       return;
     }
@@ -680,7 +689,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
         picker.selected = key.name === 'home' ? 0 : key.name === 'end' ? Math.max(0, count - 1) : Math.max(0, Math.min(count - 1, picker.selected + (key.name === 'up' || key.name === 'pageup' ? -step : step)));
       } else if (key.name === 'return' || key.name === 'enter') {
         const timezone = matchingTimezones(picker)[picker.selected];
-        if (timezone) { picker.parent.draft = validateSettings({ ...picker.parent.draft, timezone }); screen = picker.parent; report('时区草稿已修改，保存设置后生效。'); }
+        if (timezone) { picker.parent.draft = validateSettings({ ...picker.parent.draft, timezone }); screen = picker.parent; report('时区草稿已修改，保存设置后生效。', 'accent', false); }
         else report('没有匹配的时区。', 'warning');
       } else if (text) { picker.query = (picker.query + clean(text)).slice(0, 128); picker.selected = 0; }
       requestRender(); return;
@@ -729,18 +738,18 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
         case 'i': pause(); break;
         case 'c': startJob('只读查询', home, async signal => {
           await ensureWorker(root, signal); signal.throwIfAborted(); await actions.check(context.store);
-          return { message: '已请求只读查询。', tone: 'wait' };
+          return { message: '已请求只读查询。', tone: 'wait', log: false };
         }); break;
         case 'r': {
           const snapshot = context.store.read();
           startJob('启用当前账号', home, async signal => {
             await ensureWorker(root, signal); await actions.resume(context.store, context.auth, signal, snapshot.generation, snapshot.configKey);
-            return { message: '账号已启用。' };
+            return { message: '账号已启用。', log: false };
           }, true); break;
         }
         case 'x': startJob('停止整个后台', home, async () => {
           if (accounts.legacyRunning()) await actions.stop(root); else await accounts.stopAll();
-          return { message: '已请求停止整个后台，所有账号暂停。', tone: 'muted' };
+          return { message: '已请求停止整个后台，所有账号暂停。', tone: 'muted', log: false };
         }); break;
         case 'l': startJob('打开登录', home, async signal => {
           await actions.interrupt(context.store); signal.throwIfAborted();
@@ -773,20 +782,20 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
         if (selected.selected === selected.items.length) {
           accounts.requireManaged(); screen = { kind: 'login', selected: 0, adding: true, parent: selected };
         } else {
-          selectAccount(selected.items[selected.selected]!.id); report('账号已切换。');
+          selectAccount(selected.items[selected.selected]!.id); report('账号已切换。', 'accent', false);
         }
       } else if (selected.kind === 'login') {
         const browser = selected.selected === 1;
         startJob(browser ? '浏览器授权' : '设备码授权', selected, async (signal, announce) => {
           const saved = await accounts.login(context.auth, context.id, browser, announce, signal);
           context.api.clearModels(); contexts.get(saved)?.api.clearModels();
-          return { screen: { kind: 'home' }, account: saved, message: '登录成功，账号保持暂停。' };
+          return { screen: { kind: 'home' }, account: saved, message: '登录成功，账号保持暂停。', log: false };
         });
       } else if (selected.kind === 'models') {
         const model = selected.models[selected.selected]!;
         startJob('保存模型', selected, async signal => {
           const changed = await accounts.configure(context.id, { ...context.store.read().settings, model: model.id }, undefined, signal);
-          return { screen: { kind: 'home' }, message: `模型已保存，${changed} 个变动账号保持暂停。` };
+          return { screen: { kind: 'home' }, message: `模型已保存，${changed} 个变动账号保持暂停。`, log: false };
         });
       } else if (selected.kind === 'languages') {
         const value: Language = selected.selected === 0 ? 'en' : 'zh-CN';
@@ -801,7 +810,7 @@ export async function runTui(root: Store, initialId = 'default'): Promise<void> 
       } else if (selected.selected === fields.length + 2) {
         startJob('保存设置', selected, async signal => {
           const changed = await accounts.configure(context.id, selected.draft, selected.syncSettings, signal);
-          return { screen: { kind: 'home' }, message: `设置已保存，${changed} 个变动账号保持暂停。` };
+          return { screen: { kind: 'home' }, message: `设置已保存，${changed} 个变动账号保持暂停。`, log: false };
         });
       } else {
         const field = fields[selected.selected]!;

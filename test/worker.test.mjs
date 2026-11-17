@@ -16,22 +16,29 @@ test('paused polling and explicit check are read-only even with an idle window',
   await worker.cycle(true);
   assert(f.calls.every(c => c.method === 'GET')); assert.equal(f.store.read().status.nextRefresh, null);
 });
-test('one idle cycle sends exactly once and distinguishes completion from activation', async t => {
+test('an idle task sends once then confirms after 30 seconds, distinguishing completion from activation', async t => {
+  let time = Date.now(); t.mock.method(Date, 'now', () => time);
   let sent = false;
   const f = await fixture(t, (call, response) => {
     if (call.path === '/responses') { sent = true; response.writeHead(200).end(completed); }
     else json(response, wireUsage({ idle: !sent }));
   });
   await resume(f.store, f.auth);
-  await new Worker(f.store, f.api).cycle();
+  const worker = new Worker(f.store, f.api);
+  await worker.cycle();
   assert.equal(f.calls.filter(c => c.path === '/responses').length, 1);
   assert.equal(f.calls.filter(c => c.path.startsWith('/models')).length, 0);
+  assert.equal(f.calls.length, 2);
+  assert(f.store.read().hold);
+  time += 30_000;
+  await worker.cycle();
+  assert.equal(f.calls.length, 3);
   assert.equal(f.store.read().hold, null);
   const events = f.store.read().status.events.map(e => e.text).join('\n');
-  assert.match(events, /Opening command completed; confirming result/); assert.match(events, /Window opening confirmed/);
+  assert.match(events, /Opening command completed; checking in 30 seconds/); assert.match(events, /Window opening confirmed/);
   assert.doesNotMatch(events, /hello|pending marker|model-specific|in-flight/i);
 });
-test('uncertain send hold survives restart and checks; only explicit review can retry', async t => {
+test('a pending send survives immediate reopening and manual checks without a premature retry', async t => {
   const f = await fixture(t, (call, response) => {
     if (call.path === '/responses') response.writeHead(200).end('data: {"type":"response.created"}\n\n');
     else json(response, wireUsage());
@@ -77,7 +84,7 @@ test('a pending reset plan is discarded when a new window has already opened', a
   await resume(f.store, f.auth);
   const worker = new Worker(f.store, f.api);
   await worker.cycle(); assert(f.store.read().status.nextRefresh);
-  remaining = 17999;
+  remaining = 17970;
   await worker.cycle(); assert.equal(f.store.read().status.nextRefresh, null);
   assert(f.calls.every(c => c.method === 'GET'));
 });
